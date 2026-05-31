@@ -2,7 +2,12 @@ use std::collections::HashMap;
 #[cfg(not(target_arch = "wasm32"))]
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
+// `SystemTime::now()` panics on wasm32-unknown-unknown; web-time shims it there
+// and re-exports std elsewhere. Mirrors the `Instant` handling in lib_pipeline.
+#[cfg(not(target_arch = "wasm32"))]
 use std::time::{SystemTime, UNIX_EPOCH};
+#[cfg(target_arch = "wasm32")]
+use web_time::{SystemTime, UNIX_EPOCH};
 
 use typst::diag::FileResult;
 use typst::foundations::{Bytes, Datetime};

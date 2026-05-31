@@ -11,7 +11,7 @@ keywords = ["pdf", "docx", "xlsx", "pptx", "converter"]
 categories = ["text-processing"]
 
 [features]
-wasm = ["wasm-bindgen", "web-time"]
+wasm = ["wasm-bindgen"]
 pdf-ops = ["lopdf"]
 typescript = ["ts-rs"]
 
@@ -36,11 +36,15 @@ image = "0.25"
 tracing = "0.1"
 wasm-bindgen = { version = "0.2", optional = true }
 ts-rs = { version = "12", optional = true }
-web-time = { version = "1.1", optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom_02 = { package = "getrandom", version = "0.2", features = ["js"] }
 getrandom = { version = "0.3", features = ["wasm_js"] }
+# `std::time::{Instant, SystemTime}` panic with "time not implemented on this
+# platform" on wasm32-unknown-unknown. web-time shims them via the browser
+# clock and re-exports std on every other target. Kept out of the `wasm`
+# feature so a no-feature wasm32 build (CI `wasm-check` step 1) still compiles.
+web-time = "1.1"
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
 wasm-bindgen-test = "0.3"
