@@ -240,22 +240,26 @@ pub(super) fn resolve_hyperlink_url(
 }
 
 pub(super) fn is_column_break(br: &docx_rs::Break) -> bool {
-    serde_json::to_value(br)
-        .ok()
-        .and_then(|v| {
-            v.get("breakType")
-                .and_then(|bt| bt.as_str().map(|s| s == "column"))
-        })
-        .unwrap_or(false)
+    break_type(br).as_deref() == Some("column")
 }
 
-pub(super) fn extract_run_text_skip_column_breaks(run: &docx_rs::Run) -> String {
+pub(super) fn is_page_break(br: &docx_rs::Break) -> bool {
+    break_type(br).as_deref() == Some("page")
+}
+
+fn break_type(br: &docx_rs::Break) -> Option<String> {
+    serde_json::to_value(br)
+        .ok()
+        .and_then(|value| value.get("breakType")?.as_str().map(String::from))
+}
+
+pub(super) fn extract_run_text_skip_layout_breaks(run: &docx_rs::Run) -> String {
     let mut text = String::new();
     for child in &run.children {
         match child {
             docx_rs::RunChild::Text(t) => text.push_str(&t.text),
             docx_rs::RunChild::Tab(_) => text.push('\t'),
-            docx_rs::RunChild::Break(br) if !is_column_break(br) => {
+            docx_rs::RunChild::Break(br) if !is_column_break(br) && !is_page_break(br) => {
                 text.push('\n');
             }
             _ => {}

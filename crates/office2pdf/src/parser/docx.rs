@@ -43,8 +43,9 @@ use self::styles::{
 use self::tables::convert_table;
 use self::text::{
     extract_doc_default_text_style, extract_paragraph_style, extract_run_style,
-    extract_run_style_id, extract_run_text, extract_run_text_skip_column_breaks,
-    extract_tab_stop_overrides, is_column_break, parse_hex_color, resolve_hyperlink_url,
+    extract_run_style_id, extract_run_text, extract_run_text_skip_layout_breaks,
+    extract_tab_stop_overrides, is_column_break, is_page_break, parse_hex_color,
+    resolve_hyperlink_url,
 };
 #[cfg(test)]
 use self::text::{extract_tab_stops, resolve_highlight_color};
@@ -416,15 +417,16 @@ fn build_text_run(
 }
 
 /// Intermediate results from scanning a run's children for media, text boxes,
-/// and structural elements (column breaks).
+/// and structural page/column breaks.
 struct RunChildrenMedia {
     has_column_break: bool,
+    has_page_break: bool,
     text_box_blocks: Vec<Block>,
 }
 
-/// Scan a run's children for drawings, VML shapes, and column breaks.
-/// Extracted images are pushed to `inline_images`; text boxes and column break
-/// detection are returned in `RunChildrenMedia`.
+/// Scan a run's children for drawings, VML shapes, and layout breaks.
+/// Extracted images are pushed to `inline_images`; text boxes and break detection
+/// are returned in `RunChildrenMedia`.
 fn extract_run_children_media(
     run: &docx_rs::Run,
     images: &ImageMap,
@@ -434,6 +436,7 @@ fn extract_run_children_media(
     inline_images: &mut Vec<Block>,
 ) -> RunChildrenMedia {
     let mut has_column_break: bool = false;
+    let mut has_page_break: bool = false;
     let mut text_box_blocks: Vec<Block> = Vec::new();
 
     for run_child in &run.children {
@@ -474,10 +477,16 @@ fn extract_run_children_media(
         {
             has_column_break = true;
         }
+        if let docx_rs::RunChild::Break(br) = run_child
+            && is_page_break(br)
+        {
+            has_page_break = true;
+        }
     }
 
     RunChildrenMedia {
         has_column_break,
+        has_page_break,
         text_box_blocks,
     }
 }
@@ -585,17 +594,21 @@ fn convert_paragraph_blocks(
                     out.extend(media.text_box_blocks);
                 }
 
-                if media.has_column_break {
-                    // Flush current runs as a paragraph before the column break
+                if media.has_page_break || media.has_column_break {
+                    // Flush current runs as a paragraph before the layout break.
                     if !runs.is_empty() {
                         out.append(&mut inline_images);
                         push_paragraph_from_runs(out, para, resolved_style, is_rtl, &mut runs);
                         emitted_paragraph = true;
                     }
-                    out.push(Block::ColumnBreak);
+                    out.push(if media.has_page_break {
+                        Block::PageBreak
+                    } else {
+                        Block::ColumnBreak
+                    });
 
                     // Still extract any text from this run (after the break)
-                    let text: String = extract_run_text_skip_column_breaks(run);
+                    let text: String = extract_run_text_skip_layout_breaks(run);
                     if let Some(ir_run) = build_text_run(
                         text,
                         &run.run_property,

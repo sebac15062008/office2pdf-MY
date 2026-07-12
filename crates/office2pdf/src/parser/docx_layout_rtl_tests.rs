@@ -250,6 +250,30 @@ fn test_parse_docx_column_break() {
 }
 
 #[test]
+fn test_parse_docx_run_page_break() {
+    let data = build_docx_bytes(vec![
+        docx_rs::Paragraph::new()
+            .add_run(docx_rs::Run::new().add_text("Before"))
+            .add_run(docx_rs::Run::new().add_break(docx_rs::BreakType::Page))
+            .add_run(docx_rs::Run::new().add_text("After")),
+    ]);
+    let parser = DocxParser;
+    let (doc, _warnings) = parser.parse(&data, &ConvertOptions::default()).unwrap();
+
+    let flow = match &doc.pages[0] {
+        Page::Flow(flow) => flow,
+        _ => panic!("Expected FlowPage"),
+    };
+
+    assert!(
+        flow.content
+            .iter()
+            .any(|block| matches!(block, Block::PageBreak)),
+        "a run-level page break should remain a structural page break"
+    );
+}
+
+#[test]
 fn test_parse_docx_single_column_no_layout() {
     let document_xml = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
