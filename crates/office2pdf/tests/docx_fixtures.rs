@@ -832,14 +832,14 @@ docx_fixture_tests!(poi_styles, "poi_styles.docx");
 docx_fixture_tests!(various_pictures, "VariousPictures.docx");
 
 #[test]
-fn structure_various_pictures_preserves_modern_raster_and_emf_images() {
+fn structure_various_pictures_preserves_raster_emf_and_wmf_images() {
     let pages = flow_pages("VariousPictures.docx");
     let blocks = all_blocks(&pages);
 
     assert_eq!(
         image_block_count(&blocks),
-        4,
-        "PNG, JPEG, and both EMF images should survive parsing; legacy WMF is out of scope"
+        5,
+        "PNG, JPEG, both EMF images, and the WMF image should survive parsing"
     );
 }
 

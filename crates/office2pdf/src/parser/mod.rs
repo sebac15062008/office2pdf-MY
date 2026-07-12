@@ -9,6 +9,7 @@ pub(crate) mod omml;
 pub mod pptx;
 pub(crate) mod smartart;
 pub(crate) mod units;
+pub(crate) mod wmf;
 pub mod xlsx;
 pub(crate) mod xml_util;
 

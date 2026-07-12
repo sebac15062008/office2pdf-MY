@@ -107,7 +107,7 @@ fn build_image_map(docx: &docx_rs::Docx) -> ImageMap {
         .collect()
 }
 
-fn build_document_emf_image_map<R: Read + std::io::Seek>(
+fn build_document_metafile_image_map<R: Read + std::io::Seek>(
     archive: &mut zip::ZipArchive<R>,
 ) -> ImageMap {
     let Some(relationships_xml) = read_zip_text(archive, "word/_rels/document.xml.rels") else {
@@ -136,11 +136,11 @@ fn build_document_emf_image_map<R: Read + std::io::Seek>(
                         _ => {}
                     }
                 }
-                if is_image
-                    && let (Some(id), Some(target)) = (id, target)
-                    && target.to_ascii_lowercase().ends_with(".emf")
-                {
-                    relationships.push((id, target));
+                if is_image && let (Some(id), Some(target)) = (id, target) {
+                    let lowercase_target: String = target.to_ascii_lowercase();
+                    if lowercase_target.ends_with(".emf") || lowercase_target.ends_with(".wmf") {
+                        relationships.push((id, target));
+                    }
                 }
             }
             Ok(quick_xml::events::Event::Eof) | Err(_) => break,
@@ -154,7 +154,11 @@ fn build_document_emf_image_map<R: Read + std::io::Seek>(
             let path = format!("word/{}", target.trim_start_matches('/'));
             let mut data: Vec<u8> = Vec::new();
             archive.by_name(&path).ok()?.read_to_end(&mut data).ok()?;
-            let svg = crate::parser::emf::convert_emf_to_svg(&data)?;
+            let svg: Vec<u8> = if target.to_ascii_lowercase().ends_with(".wmf") {
+                crate::parser::wmf::convert_wmf_to_svg(&data)?
+            } else {
+                crate::parser::emf::convert_emf_to_svg(&data)?
+            };
             Some((
                 id,
                 DocxImageAsset {
@@ -174,7 +178,7 @@ struct ZipPreParseAssets {
     chart_ctx: ChartContext,
     column_layouts: Vec<Option<ColumnLayout>>,
     header_footer_assets: HeaderFooterAssets,
-    emf_images: ImageMap,
+    metafile_images: ImageMap,
 }
 
 /// Build all pre-parse contexts from the DOCX ZIP in a single pass.
@@ -200,7 +204,7 @@ fn build_zip_preparse_assets(data: &[u8]) -> ZipPreParseAssets {
             let bidi = BidiContext::from_xml(doc_xml.as_deref());
             let small_caps = SmallCapsContext::from_xml(doc_xml.as_deref());
             let header_footer_assets = build_header_footer_assets(&mut archive);
-            let emf_images = build_document_emf_image_map(&mut archive);
+            let metafile_images = build_document_metafile_image_map(&mut archive);
             let ctx = DocxConversionContext {
                 notes,
                 wraps,
@@ -218,7 +222,7 @@ fn build_zip_preparse_assets(data: &[u8]) -> ZipPreParseAssets {
                 chart_ctx,
                 column_layouts,
                 header_footer_assets,
-                emf_images,
+                metafile_images,
             }
         }
         Err(_) => ZipPreParseAssets {
@@ -237,7 +241,7 @@ fn build_zip_preparse_assets(data: &[u8]) -> ZipPreParseAssets {
             chart_ctx: ChartContext::empty(),
             column_layouts: Vec::new(),
             header_footer_assets: HeaderFooterAssets::default(),
-            emf_images: ImageMap::new(),
+            metafile_images: ImageMap::new(),
         },
     }
 }
@@ -255,7 +259,7 @@ impl Parser for DocxParser {
             mut chart_ctx,
             column_layouts,
             header_footer_assets,
-            emf_images,
+            metafile_images,
         } = build_zip_preparse_assets(data);
 
         let docx = docx_rs::read_docx(data).map_err(|e| {
@@ -266,7 +270,7 @@ impl Parser for DocxParser {
         ctx.notes.populate_style_ids(&docx.styles);
 
         let mut images = build_image_map(&docx);
-        images.extend(emf_images);
+        images.extend(metafile_images);
         let hyperlinks = build_hyperlink_map(&docx);
         let numberings = build_numbering_map(&docx.numberings);
         let style_map = build_style_map(&docx.styles);
