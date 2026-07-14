@@ -851,7 +851,14 @@ fn generate_list_items(
     let mut i = 0;
     while i < items.len() {
         let item = &items[i];
-        let _ = write!(out, "  {item_func}[");
+        let _ = write!(out, "  {item_func}");
+        if style.kind == ListKind::Ordered
+            && i > 0
+            && let Some(start_at) = item.start_at
+        {
+            let _ = write!(out, "({start_at})");
+        }
+        out.push('[');
         write_list_item_content(out, item);
 
         if item.level == base_level {

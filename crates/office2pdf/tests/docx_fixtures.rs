@@ -779,6 +779,54 @@ docx_fixture_tests!(chartex, "chartex.docx");
 docx_fixture_tests!(checkboxes, "checkboxes.docx");
 docx_fixture_tests!(comment, "comment.docx");
 docx_fixture_tests!(complex_numbered_lists, "ComplexNumberedLists.docx");
+
+#[test]
+fn structure_complex_numbered_lists_preserves_restarts_and_continuations() {
+    let pages = flow_pages("ComplexNumberedLists.docx");
+    let blocks = all_blocks(&pages);
+    let lists = blocks
+        .iter()
+        .filter_map(|block| match block {
+            Block::List(list) => Some(list),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(lists.len(), 2, "normal text should split the list blocks");
+    let items = lists
+        .iter()
+        .flat_map(|list| list.items.iter())
+        .map(|item| {
+            let text = item
+                .content
+                .iter()
+                .flat_map(|paragraph| paragraph.runs.iter())
+                .map(|run| run.text.as_str())
+                .collect::<String>();
+            (text, item.level, item.start_at)
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        items,
+        vec![
+            ("Entry #1".to_string(), 0, Some(1)),
+            ("Entry #2, with children".to_string(), 0, None),
+            ("2-a".to_string(), 1, Some(1)),
+            ("2-b".to_string(), 1, None),
+            ("2-c".to_string(), 1, None),
+            ("Entry #3".to_string(), 0, None),
+            ("Entry #4".to_string(), 0, None),
+            ("Restarted to 1 from 5".to_string(), 0, Some(1)),
+            ("Restarted @ 2".to_string(), 0, None),
+            ("Restarted @ 3".to_string(), 0, None),
+            ("Jump to new list at 10".to_string(), 0, Some(10)),
+            ("Now 11".to_string(), 0, None),
+            ("Carrying on @ 12".to_string(), 0, Some(12)),
+            ("Carrying on @ 13".to_string(), 0, None),
+        ]
+    );
+}
 docx_fixture_tests!(delins, "delins.docx");
 docx_fixture_tests!(diff_first_page_head_foot, "DiffFirstPageHeadFoot.docx");
 

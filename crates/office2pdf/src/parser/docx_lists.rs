@@ -13,10 +13,12 @@ pub(super) struct NumInfo {
 struct ResolvedListLevel {
     style: ListLevelStyle,
     start: u32,
+    has_start_override: bool,
 }
 
 #[derive(Debug, Clone)]
 pub(super) struct ResolvedNumbering {
+    abstract_num_id: usize,
     levels: BTreeMap<u32, ResolvedListLevel>,
 }
 
@@ -25,6 +27,13 @@ struct RawListLevel {
     start: u32,
     number_format: String,
     level_text: String,
+    has_start_override: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum NumberingSeries {
+    Abstract(usize),
+    Numbering(usize),
 }
 
 pub(super) type NumberingMap = HashMap<usize, ResolvedNumbering>;
@@ -118,6 +127,7 @@ fn extract_raw_level(level: &docx_rs::Level) -> RawListLevel {
         start: serialize_u32(&level.start).unwrap_or(1),
         number_format: level.format.val.clone(),
         level_text: serialize_string(&level.text).unwrap_or_default(),
+        has_start_override: false,
     }
 }
 
@@ -143,16 +153,22 @@ fn resolve_numbering(
     for override_level in &num.level_overrides {
         let level_index = override_level.level as u32;
         if let Some(level) = &override_level.override_level {
-            raw_levels.insert(level_index, extract_raw_level(level));
+            let mut raw_level = extract_raw_level(level);
+            raw_level.has_start_override = true;
+            raw_levels.insert(level_index, raw_level);
         }
         if let Some(start) = override_level.override_start {
             raw_levels
                 .entry(level_index)
-                .and_modify(|level| level.start = start as u32)
+                .and_modify(|level| {
+                    level.start = start as u32;
+                    level.has_start_override = true;
+                })
                 .or_insert_with(|| RawListLevel {
                     start: start as u32,
                     number_format: "decimal".to_string(),
                     level_text: format!("%{}.", level_index + 1),
+                    has_start_override: true,
                 });
         }
     }
@@ -180,12 +196,16 @@ fn resolve_numbering(
                         marker_style: None,
                     },
                     start: level.start,
+                    has_start_override: level.has_start_override,
                 },
             )
         })
         .collect();
 
-    ResolvedNumbering { levels }
+    ResolvedNumbering {
+        abstract_num_id: num.abstract_num_id,
+        levels,
+    }
 }
 
 pub(super) fn build_numbering_map(numberings: &docx_rs::Numberings) -> NumberingMap {
@@ -225,7 +245,15 @@ pub(super) enum TaggedElement {
 /// merged list can resolve per-item numbering across differing `numId`s.
 struct NumberedItem {
     num_id: usize,
+    series: NumberingSeries,
     item: ListItem,
+}
+
+fn numbering_series(num_id: usize, numberings: &NumberingMap) -> NumberingSeries {
+    numberings
+        .get(&num_id)
+        .map(|numbering| NumberingSeries::Abstract(numbering.abstract_num_id))
+        .unwrap_or(NumberingSeries::Numbering(num_id))
 }
 
 fn finalize_list(numbered_items: Vec<NumberedItem>, numberings: &NumberingMap) -> List {
@@ -251,27 +279,10 @@ fn finalize_list(numbered_items: Vec<NumberedItem>, numberings: &NumberingMap) -
         .or_else(|| level_styles.values().next().map(|style| style.kind))
         .unwrap_or(ListKind::Unordered);
 
-    // Ordered levels restart at their configured `start` only when first seen or
-    // re-entered at a deeper level; otherwise the counter continues across the
-    // merged items so "1." then "2." is preserved instead of "1." then "1.".
-    let mut items: Vec<ListItem> = Vec::with_capacity(numbered_items.len());
-    let mut previous_level: Option<u32> = None;
-    for NumberedItem { num_id, mut item } in numbered_items {
-        let resolved_level = numberings
-            .get(&num_id)
-            .and_then(|numbering| numbering.levels.get(&item.level));
-        item.start_at = match (resolved_level, previous_level) {
-            (Some(level), None) if level.style.kind == ListKind::Ordered => Some(level.start),
-            (Some(level), Some(previous_level))
-                if level.style.kind == ListKind::Ordered && item.level > previous_level =>
-            {
-                Some(level.start)
-            }
-            _ => None,
-        };
-        previous_level = Some(item.level);
-        items.push(item);
-    }
+    let items: Vec<ListItem> = numbered_items
+        .into_iter()
+        .map(|numbered| numbered.item)
+        .collect();
 
     List {
         kind,
@@ -290,17 +301,53 @@ pub(super) fn group_into_lists(
 ) -> Vec<Block> {
     let mut result: Vec<Block> = Vec::new();
     let mut current_list: Vec<NumberedItem> = Vec::new();
+    let mut counters: HashMap<NumberingSeries, BTreeMap<u32, u32>> = HashMap::new();
+    let mut last_num_id: HashMap<NumberingSeries, usize> = HashMap::new();
 
     for element in elements {
         match element {
             TaggedElement::ListParagraph { info, paragraph } => {
+                let series = numbering_series(info.num_id, numberings);
+                let resolved_level = numberings
+                    .get(&info.num_id)
+                    .and_then(|numbering| numbering.levels.get(&info.level));
+                let is_ordered =
+                    resolved_level.is_some_and(|level| level.style.kind == ListKind::Ordered);
+                let is_num_id_change = last_num_id
+                    .get(&series)
+                    .is_some_and(|previous| *previous != info.num_id);
+                let has_explicit_restart = resolved_level
+                    .is_some_and(|level| level.has_start_override && is_num_id_change);
+                let is_first_in_block = current_list.is_empty();
+                let changes_series = current_list
+                    .last()
+                    .is_some_and(|numbered| numbered.series != series);
+                let mut item = ListItem {
+                    content: vec![paragraph],
+                    level: info.level,
+                    start_at: None,
+                };
+                if is_ordered {
+                    let level = resolved_level.expect("ordered level must be resolved");
+                    let series_counters = counters.entry(series).or_default();
+                    let should_restart =
+                        has_explicit_restart || !series_counters.contains_key(&info.level);
+                    let number = if should_restart {
+                        level.start
+                    } else {
+                        series_counters[&info.level].saturating_add(1)
+                    };
+                    series_counters.insert(info.level, number);
+                    series_counters.retain(|level, _| *level <= info.level);
+                    if should_restart || is_first_in_block || changes_series {
+                        item.start_at = Some(number);
+                    }
+                }
+                last_num_id.insert(series, info.num_id);
                 current_list.push(NumberedItem {
                     num_id: info.num_id,
-                    item: ListItem {
-                        content: vec![paragraph],
-                        level: info.level,
-                        start_at: None,
-                    },
+                    series,
+                    item,
                 });
             }
             TaggedElement::Plain(blocks) => {

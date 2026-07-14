@@ -108,7 +108,7 @@ This project follows a **6-month rolling MSRV policy** (aligned with [tokio](htt
 
 ## Visual Comparison Workflow
 
-- For visual bug fixes tied to an issue, commit `assets/bugfixes/issue-<number>/before.png` and `after.png` generated from the same fixture, page, resolution, and renderer. Keep the images suitable for direct links in GitHub issues and PRs.
+- For visual bug fixes tied to an issue, commit `assets/bugfixes/issue-<number>/gt.jpg`, `before.jpg`, and `after.jpg` generated from the same fixture, page, resolution, and renderer. Use progressive JPEG quality 86 with metadata stripped, preserve the source pixel dimensions, and verify text and images remain legible for direct GitHub links.
 
 When comparing PDF output against ground truth (classified fixtures):
 

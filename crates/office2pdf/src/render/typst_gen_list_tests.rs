@@ -113,6 +113,49 @@ fn test_generate_numbered_list() {
 }
 
 #[test]
+fn test_generate_numbered_list_emits_mid_list_restart() {
+    use crate::ir::List;
+
+    let make_item = |text: &str, start_at: Option<u32>| ListItem {
+        content: vec![Paragraph {
+            style: ParagraphStyle::default(),
+            runs: vec![Run {
+                text: text.to_string(),
+                style: TextStyle::default(),
+                href: None,
+                footnote: None,
+            }],
+        }],
+        level: 0,
+        start_at,
+    };
+    let list = List {
+        kind: ListKind::Ordered,
+        items: vec![
+            make_item("First", Some(1)),
+            make_item("Second", None),
+            make_item("Restarted", Some(10)),
+        ],
+        level_styles: BTreeMap::from([(
+            0,
+            ListLevelStyle {
+                kind: ListKind::Ordered,
+                numbering_pattern: Some("1.".to_string()),
+                full_numbering: false,
+                marker_text: None,
+                marker_style: None,
+            },
+        )]),
+    };
+    let doc = make_doc(vec![make_flow_page(vec![Block::List(list)])]);
+
+    let output = generate_typst(&doc).unwrap();
+
+    assert!(output.source.contains("start: 1"));
+    assert!(output.source.contains("enum.item(10)[Restarted]"));
+}
+
+#[test]
 fn test_generate_nested_list() {
     use crate::ir::List;
 
