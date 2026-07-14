@@ -16,6 +16,8 @@ mod notes;
 mod small_caps;
 #[path = "docx_context_table_header.rs"]
 mod table_header;
+#[path = "docx_context_table_style.rs"]
+mod table_style;
 #[path = "docx_context_vml.rs"]
 mod vml;
 #[path = "docx_context_wrap.rs"]
@@ -34,6 +36,7 @@ pub(super) use small_caps::SmallCapsContext;
 pub(super) use table_header::TableHeaderContext;
 #[cfg(test)]
 pub(super) use table_header::scan_table_headers;
+pub(super) use table_style::{ResolvedTableStyle, TableStyleContext, apply_table_text_style};
 pub(super) use vml::{VmlTextBoxContext, VmlTextBoxInfo};
 pub(super) use wrap::{WrapContext, build_wrap_context_from_xml};
 
@@ -47,6 +50,7 @@ pub(super) struct DocxConversionContext {
     pub(super) drawing_text_boxes: DrawingTextBoxContext,
     pub(super) drawing_shapes: DrawingShapeContext,
     pub(super) table_headers: TableHeaderContext,
+    pub(super) table_styles: TableStyleContext,
     pub(super) vml_text_boxes: VmlTextBoxContext,
     pub(super) bidi: BidiContext,
     pub(super) small_caps: SmallCapsContext,

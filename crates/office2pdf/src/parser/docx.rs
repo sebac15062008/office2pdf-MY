@@ -20,10 +20,10 @@ use self::contexts::scan_table_headers;
 use self::contexts::{
     BidiContext, ChartContext, DocxConversionContext, DrawingShapeContext, DrawingTextBoxContext,
     DrawingTextBoxInfo, MathContext, NoteContext, SmallCapsContext, TableHeaderContext,
-    VmlTextBoxContext, VmlTextBoxInfo, WpgDrawingInfo, WrapContext, build_chart_context_from_xml,
-    build_math_context_from_xml, build_note_context_from_xml, build_wrap_context_from_xml,
-    extract_column_layout_from_section_property, is_note_reference_run, read_zip_text,
-    scan_column_layouts,
+    TableStyleContext, VmlTextBoxContext, VmlTextBoxInfo, WpgDrawingInfo, WrapContext,
+    build_chart_context_from_xml, build_math_context_from_xml, build_note_context_from_xml,
+    build_wrap_context_from_xml, extract_column_layout_from_section_property,
+    is_note_reference_run, read_zip_text, scan_column_layouts,
 };
 use self::lists::{
     NumberingMap, TaggedElement, build_numbering_map, extract_num_info, group_into_lists,
@@ -189,6 +189,7 @@ fn build_zip_preparse_assets(data: &[u8]) -> ZipPreParseAssets {
         Ok(mut archive) => {
             let metadata = crate::parser::metadata::extract_metadata_from_zip(&mut archive);
             let doc_xml = read_zip_text(&mut archive, "word/document.xml");
+            let styles_xml = read_zip_text(&mut archive, "word/styles.xml");
             let theme_xml = read_zip_text(&mut archive, "word/theme/theme1.xml");
             let notes = build_note_context_from_xml(doc_xml.as_deref(), &mut archive);
             let wraps = build_wrap_context_from_xml(doc_xml.as_deref());
@@ -196,6 +197,8 @@ fn build_zip_preparse_assets(data: &[u8]) -> ZipPreParseAssets {
             let drawing_shapes =
                 DrawingShapeContext::from_xml_with_theme(doc_xml.as_deref(), theme_xml.as_deref());
             let table_headers = TableHeaderContext::from_xml(doc_xml.as_deref());
+            let table_styles =
+                TableStyleContext::from_xml(doc_xml.as_deref(), styles_xml.as_deref());
             let vml_text_boxes = VmlTextBoxContext::from_xml(doc_xml.as_deref());
             let math = build_math_context_from_xml(doc_xml.as_deref());
             let chart_ctx = build_chart_context_from_xml(doc_xml.as_deref(), &mut archive);
@@ -213,6 +216,7 @@ fn build_zip_preparse_assets(data: &[u8]) -> ZipPreParseAssets {
                 drawing_text_boxes,
                 drawing_shapes,
                 table_headers,
+                table_styles,
                 vml_text_boxes,
                 bidi,
                 small_caps,
@@ -235,6 +239,7 @@ fn build_zip_preparse_assets(data: &[u8]) -> ZipPreParseAssets {
                 drawing_text_boxes: DrawingTextBoxContext::from_xml(None),
                 drawing_shapes: DrawingShapeContext::from_xml(None),
                 table_headers: TableHeaderContext::from_xml(None),
+                table_styles: TableStyleContext::from_xml(None, None),
                 vml_text_boxes: VmlTextBoxContext::from_xml(None),
                 bidi: BidiContext::from_xml(None),
                 small_caps: SmallCapsContext::from_xml(None),

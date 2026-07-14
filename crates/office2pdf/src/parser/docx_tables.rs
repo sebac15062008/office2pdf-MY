@@ -1,4 +1,4 @@
-use super::contexts::DocxConversionContext;
+use super::contexts::{DocxConversionContext, ResolvedTableStyle, apply_table_text_style};
 use super::{
     Alignment, Block, BorderLineStyle, BorderSide, CellBorder, CellVerticalAlign, Color,
     HyperlinkMap, ImageMap, Insets, MAX_TABLE_DEPTH, StyleMap, Table, TableCell, TableRow,
@@ -15,6 +15,7 @@ struct RawCell {
     vmerge: Option<String>,
     border: Option<CellBorder>,
     background: Option<Color>,
+    has_explicit_background: bool,
     vertical_align: Option<CellVerticalAlign>,
     padding: Option<Insets>,
 }
@@ -134,6 +135,7 @@ pub(super) fn convert_table(
     depth: usize,
 ) -> Table {
     let header_info = ctx.table_headers.consume_next();
+    let table_style = ctx.table_styles.consume_next();
     let table_prop_json = serde_json::to_value(&table.property).ok();
     let alignment = extract_table_alignment(table_prop_json.as_ref());
     let default_cell_padding = extract_table_default_cell_padding(table_prop_json.as_ref());
@@ -147,6 +149,9 @@ pub(super) fn convert_table(
         depth,
         default_cell_padding,
     );
+    if let Some(table_style) = table_style.as_ref() {
+        apply_conditional_table_style(&mut raw_rows, table_style);
+    }
 
     let mut column_widths: Vec<f64> = if table.grid.is_empty() {
         derive_column_widths_from_cells(&raw_rows).unwrap_or_default()
@@ -232,10 +237,12 @@ fn extract_raw_rows(
                 .as_ref()
                 .and_then(|j| j.get("borders"))
                 .and_then(extract_cell_borders);
-            let background = prop_json
+            let shading = prop_json
                 .as_ref()
                 .and_then(|j| j.get("shading"))
-                .and_then(extract_cell_shading);
+                .filter(|value| !value.is_null());
+            let background = shading.and_then(extract_cell_shading);
+            let has_explicit_background = shading.is_some();
             let vertical_align = prop_json
                 .as_ref()
                 .and_then(|j| j.get("verticalAlign"))
@@ -255,6 +262,7 @@ fn extract_raw_rows(
                 vmerge,
                 border,
                 background,
+                has_explicit_background,
                 vertical_align,
                 padding,
             });
@@ -266,6 +274,26 @@ fn extract_raw_rows(
     }
 
     raw_rows
+}
+
+fn apply_conditional_table_style(raw_rows: &mut [RawRow], table_style: &ResolvedTableStyle) {
+    let row_count = raw_rows.len();
+    let column_count = raw_table_column_count(raw_rows);
+    for (row_index, row) in raw_rows.iter_mut().enumerate() {
+        for cell in &mut row.cells {
+            let style = table_style.cell_style(
+                row_index,
+                row_count,
+                cell.col_index,
+                cell.col_span as usize,
+                column_count,
+            );
+            if !cell.has_explicit_background {
+                cell.background = style.background;
+            }
+            apply_table_text_style(&mut cell.content, style);
+        }
+    }
 }
 
 fn derive_column_widths_from_cells(raw_rows: &[RawRow]) -> Option<Vec<f64>> {

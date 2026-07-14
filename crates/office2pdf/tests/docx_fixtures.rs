@@ -912,6 +912,88 @@ docx_fixture_tests!(oxp_table, "oxp_table.docx");
 docx_fixture_tests!(oxp_content_control, "oxp_content_control.docx");
 docx_fixture_tests!(oxp_lots_of_stuff, "oxp_lots_of_stuff.docx");
 docx_fixture_tests!(oxp_complex_table, "oxp_complex_table.docx");
+
+#[test]
+fn structure_oxp_complex_table_preserves_conditional_shading_and_merges() {
+    let pages = flow_pages("oxp_complex_table.docx");
+    let blocks = all_blocks(&pages);
+    let table = blocks
+        .iter()
+        .find_map(|block| match block {
+            Block::Table(table) => Some(table),
+            _ => None,
+        })
+        .expect("fixture should contain a table");
+
+    assert_eq!(table.rows.len(), 8);
+    assert_eq!(table.rows[0].cells.len(), 9);
+    assert_eq!(table.rows[0].cells[1].col_span, 2);
+    assert_eq!(table.rows[1].cells[0].row_span, 3);
+    assert_eq!(table.rows[2].cells.len(), 9);
+    assert_eq!(table.rows[3].cells.len(), 9);
+
+    let cell_text = |row: usize, cell: usize| {
+        table.rows[row].cells[cell]
+            .content
+            .iter()
+            .filter_map(|block| match block {
+                Block::Paragraph(paragraph) => Some(paragraph_text(paragraph)),
+                _ => None,
+            })
+            .collect::<String>()
+    };
+    assert_eq!(cell_text(0, 1), "Hort merged");
+    assert_eq!(cell_text(1, 0), "Vert merged");
+    assert_eq!(cell_text(3, 0), "bb");
+    assert_eq!(cell_text(7, 1), "A44");
+
+    let black = Some(Color::new(0x00, 0x00, 0x00));
+    let dark_gray = Some(Color::new(0x99, 0x99, 0x99));
+    let light_gray = Some(Color::new(0xCC, 0xCC, 0xCC));
+    assert!(
+        table.rows[0]
+            .cells
+            .iter()
+            .all(|cell| cell.background == black),
+        "first-row conditional style should use a black fill"
+    );
+    let first_header_run = match &table.rows[0].cells[0].content[0] {
+        Block::Paragraph(paragraph) => &paragraph.runs[0],
+        _ => panic!("first header cell should contain a paragraph"),
+    };
+    assert_eq!(
+        first_header_run.style.color,
+        Some(Color::new(255, 255, 255))
+    );
+    assert_eq!(first_header_run.style.bold, Some(true));
+    assert_eq!(table.rows[1].cells[0].background, black);
+    assert_eq!(table.rows[1].cells[1].background, dark_gray);
+    assert!(
+        table.rows[2]
+            .cells
+            .iter()
+            .all(|cell| cell.background == light_gray)
+    );
+    assert!(
+        table.rows[3]
+            .cells
+            .iter()
+            .all(|cell| cell.background == dark_gray)
+    );
+    for (row_index, expected_body_fill) in [
+        (4, light_gray),
+        (5, dark_gray),
+        (6, light_gray),
+        (7, dark_gray),
+    ] {
+        assert_eq!(table.rows[row_index].cells[0].background, black);
+        assert!(
+            table.rows[row_index].cells[1..]
+                .iter()
+                .all(|cell| cell.background == expected_body_fill)
+        );
+    }
+}
 docx_fixture_tests!(oxp_footnote_ref, "oxp_footnote_ref.docx");
 
 // --- Encrypted / password-protected fixtures --------------------------------
