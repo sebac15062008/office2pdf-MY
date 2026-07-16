@@ -1,12 +1,18 @@
 #![cfg(not(target_arch = "wasm32"))] // native-only integration tests (fs, qpdf, criterion)
-//! Bulk conversion smoke tests for all fixture files.
+//! Bulk conversion regression tests for all fixture files.
 //!
 //! These tests iterate over ALL fixture files in `tests/fixtures/` and attempt
-//! to convert each one to PDF. The goal is to detect panics — conversion errors
-//! are acceptable, but panics are not.
+//! to convert each one to PDF. The CI gate rejects panics and any fixture that
+//! converted successfully in the committed baseline but no longer succeeds.
+//! New ordinary conversion errors are reported without blocking corpus growth.
 //!
-//! Run with: `cargo test -p office2pdf --test bulk_conversion -- --nocapture --ignored`
+//! Run the gate with:
+//! `cargo test --release -p office2pdf --test bulk_conversion test_bulk_regression_gate -- --ignored --nocapture --exact`
+//!
+//! Set `UPDATE_BULK_BASELINE=1` to intentionally replace the baseline with the
+//! current outcomes after reviewing all changes.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as FmtWrite;
 use std::io::Write;
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -123,7 +129,8 @@ fn is_expected_error(path: &Path) -> bool {
 // Types
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 enum Outcome {
     Success,
     Error,
@@ -134,6 +141,78 @@ enum Outcome {
 
 struct FileResult {
     path: PathBuf,
+    outcome: Outcome,
+    detail: String,
+}
+
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
+struct BulkBaseline {
+    version: u32,
+    fixtures: BTreeMap<String, Outcome>,
+}
+
+impl BulkBaseline {
+    fn from_entries(entries: impl IntoIterator<Item = (String, Outcome)>) -> Self {
+        Self {
+            version: 1,
+            fixtures: entries.into_iter().collect(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+enum RegressionKind {
+    Panic,
+    PreviousSuccessFailed,
+    PreviousSuccessMissing,
+    SuccessRateDecreased,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct Regression {
+    path: String,
+    kind: RegressionKind,
+    detail: String,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct BaselineComparison {
+    baseline_success_rate: f64,
+    current_success_rate: f64,
+    regressions: Vec<Regression>,
+    improvements: Vec<String>,
+    new_files: Vec<String>,
+}
+
+impl BaselineComparison {
+    fn passed(&self) -> bool {
+        self.regressions.is_empty()
+    }
+}
+
+#[derive(serde::Serialize)]
+struct MachineReport<'a> {
+    summaries: Vec<MachineSummary<'a>>,
+    files: Vec<MachineFileResult>,
+    comparison: &'a BaselineComparison,
+}
+
+#[derive(serde::Serialize)]
+struct MachineSummary<'a> {
+    format: &'a str,
+    total: usize,
+    skipped: usize,
+    success: usize,
+    error: usize,
+    expected_error: usize,
+    panic: usize,
+    success_rate: f64,
+}
+
+#[derive(serde::Serialize)]
+struct MachineFileResult {
+    path: String,
     outcome: Outcome,
     detail: String,
 }
@@ -164,12 +243,127 @@ impl Summary {
     }
 }
 
+fn compare_against_baseline(
+    baseline: &BulkBaseline,
+    current_results: &[FileResult],
+) -> BaselineComparison {
+    let current: BTreeMap<String, &FileResult> = current_results
+        .iter()
+        .map(|result| (fixture_key(&result.path), result))
+        .collect();
+    let mut regressions: Vec<Regression> = Vec::new();
+    let mut improvements: Vec<String> = Vec::new();
+
+    for (path, result) in &current {
+        if result.outcome == Outcome::Panic {
+            regressions.push(Regression {
+                path: path.clone(),
+                kind: RegressionKind::Panic,
+                detail: result.detail.clone(),
+            });
+        }
+    }
+
+    for (path, baseline_outcome) in &baseline.fixtures {
+        let current_outcome = current.get(path).map(|result| result.outcome);
+        if *baseline_outcome == Outcome::Success {
+            match current_outcome {
+                Some(Outcome::Success) => {}
+                Some(outcome) => regressions.push(Regression {
+                    path: path.clone(),
+                    kind: RegressionKind::PreviousSuccessFailed,
+                    detail: format!("baseline success became {outcome:?}"),
+                }),
+                None => regressions.push(Regression {
+                    path: path.clone(),
+                    kind: RegressionKind::PreviousSuccessMissing,
+                    detail: "baseline success is missing from the fixture corpus".to_string(),
+                }),
+            }
+        } else if current_outcome == Some(Outcome::Success) {
+            improvements.push(path.clone());
+        }
+    }
+
+    let baseline_effective: BTreeSet<&str> = baseline
+        .fixtures
+        .iter()
+        .filter(|(_, outcome)| **outcome != Outcome::ExpectedError)
+        .map(|(path, _)| path.as_str())
+        .collect();
+    let baseline_success = baseline
+        .fixtures
+        .iter()
+        .filter(|(path, outcome)| {
+            baseline_effective.contains(path.as_str()) && **outcome == Outcome::Success
+        })
+        .count();
+    let current_success = baseline_effective
+        .iter()
+        .filter(|path| {
+            current
+                .get(**path)
+                .is_some_and(|result| result.outcome == Outcome::Success)
+        })
+        .count();
+    let denominator = baseline_effective.len();
+    let baseline_success_rate = percentage(baseline_success, denominator);
+    let current_success_rate = percentage(current_success, denominator);
+    if current_success_rate + f64::EPSILON < baseline_success_rate {
+        regressions.push(Regression {
+            path: "(aggregate)".to_string(),
+            kind: RegressionKind::SuccessRateDecreased,
+            detail: format!(
+                "baseline fixture success rate decreased from {baseline_success_rate:.2}% to {current_success_rate:.2}%"
+            ),
+        });
+    }
+
+    let new_files = current
+        .keys()
+        .filter(|path| !baseline.fixtures.contains_key(*path))
+        .cloned()
+        .collect();
+
+    BaselineComparison {
+        baseline_success_rate,
+        current_success_rate,
+        regressions,
+        improvements,
+        new_files,
+    }
+}
+
+fn percentage(numerator: usize, denominator: usize) -> f64 {
+    if denominator == 0 {
+        0.0
+    } else {
+        (numerator as f64 / denominator as f64) * 100.0
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
 fn fixtures_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures")
+}
+
+fn baseline_path() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/bulk_conversion_baseline.json")
+}
+
+fn report_dir() -> PathBuf {
+    std::env::var_os("BULK_REPORT_DIR").map_or_else(
+        || PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/bulk-conversion"),
+        PathBuf::from,
+    )
+}
+
+fn fixture_key(path: &Path) -> String {
+    let relative = path.strip_prefix(fixtures_dir()).unwrap_or(path);
+    relative.to_string_lossy().replace('\\', "/")
 }
 
 /// Recursively discover all files with the given extension under `dir`.
@@ -359,7 +553,7 @@ fn format_report(results: &[FileResult], summary: &Summary) -> String {
     if !panics.is_empty() {
         writeln!(report, "## PANICS ({} files)", panics.len()).unwrap();
         for r in &panics {
-            writeln!(report, "  - {} :: {}", r.path.display(), r.detail).unwrap();
+            writeln!(report, "  - {} :: {}", fixture_key(&r.path), r.detail).unwrap();
         }
         writeln!(report).unwrap();
     }
@@ -372,7 +566,7 @@ fn format_report(results: &[FileResult], summary: &Summary) -> String {
     if !errors.is_empty() {
         writeln!(report, "## ERRORS ({} files)", errors.len()).unwrap();
         for r in &errors {
-            writeln!(report, "  - {} :: {}", r.path.display(), r.detail).unwrap();
+            writeln!(report, "  - {} :: {}", fixture_key(&r.path), r.detail).unwrap();
         }
         writeln!(report).unwrap();
     }
@@ -390,7 +584,7 @@ fn format_report(results: &[FileResult], summary: &Summary) -> String {
         )
         .unwrap();
         for r in &expected {
-            writeln!(report, "  - {} :: {}", r.path.display(), r.detail).unwrap();
+            writeln!(report, "  - {} :: {}", fixture_key(&r.path), r.detail).unwrap();
         }
         writeln!(report).unwrap();
     }
@@ -403,7 +597,61 @@ fn format_report(results: &[FileResult], summary: &Summary) -> String {
     if !successes.is_empty() {
         writeln!(report, "## SUCCESSES ({} files)", successes.len()).unwrap();
         for r in &successes {
-            writeln!(report, "  - {} :: {}", r.path.display(), r.detail).unwrap();
+            writeln!(report, "  - {} :: {}", fixture_key(&r.path), r.detail).unwrap();
+        }
+        writeln!(report).unwrap();
+    }
+
+    report
+}
+
+fn format_baseline_comparison(comparison: &BaselineComparison) -> String {
+    let mut report = String::new();
+    writeln!(report, "# Baseline Comparison").unwrap();
+    writeln!(
+        report,
+        "Baseline success rate: {:.2}% | Current success rate: {:.2}%",
+        comparison.baseline_success_rate, comparison.current_success_rate
+    )
+    .unwrap();
+    writeln!(
+        report,
+        "Gate: {}",
+        if comparison.passed() { "PASS" } else { "FAIL" }
+    )
+    .unwrap();
+    writeln!(report).unwrap();
+
+    if !comparison.regressions.is_empty() {
+        writeln!(report, "## Regressions ({})", comparison.regressions.len()).unwrap();
+        for regression in &comparison.regressions {
+            writeln!(
+                report,
+                "- `{}` ({:?}): {}",
+                regression.path, regression.kind, regression.detail
+            )
+            .unwrap();
+        }
+        writeln!(report).unwrap();
+    }
+
+    if !comparison.improvements.is_empty() {
+        writeln!(
+            report,
+            "## Improvements ({})",
+            comparison.improvements.len()
+        )
+        .unwrap();
+        for path in &comparison.improvements {
+            writeln!(report, "- `{path}`").unwrap();
+        }
+        writeln!(report).unwrap();
+    }
+
+    if !comparison.new_files.is_empty() {
+        writeln!(report, "## New Files ({})", comparison.new_files.len()).unwrap();
+        for path in &comparison.new_files {
+            writeln!(report, "- `{path}`").unwrap();
         }
         writeln!(report).unwrap();
     }
@@ -472,6 +720,100 @@ fn write_results_file(all_reports: &str) {
     } else {
         println!("Results written to: {}", output_path.display());
     }
+}
+
+fn load_baseline() -> BulkBaseline {
+    let path = baseline_path();
+    let data = std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("read bulk baseline {}: {error}", path.display()));
+    let baseline: BulkBaseline = serde_json::from_str(&data)
+        .unwrap_or_else(|error| panic!("parse bulk baseline {}: {error}", path.display()));
+    assert_eq!(
+        baseline.version, 1,
+        "unsupported bulk baseline version {}",
+        baseline.version
+    );
+    baseline
+}
+
+fn baseline_from_results(results: &[FileResult]) -> BulkBaseline {
+    BulkBaseline::from_entries(
+        results
+            .iter()
+            .map(|result| (fixture_key(&result.path), result.outcome)),
+    )
+}
+
+fn update_baseline(results: &[FileResult]) {
+    let baseline = baseline_from_results(results);
+    let json = serde_json::to_string_pretty(&baseline).expect("serialize bulk baseline");
+    let path = baseline_path();
+    std::fs::write(&path, format!("{json}\n"))
+        .unwrap_or_else(|error| panic!("write bulk baseline {}: {error}", path.display()));
+    println!("Baseline updated: {}", path.display());
+}
+
+fn write_gate_reports(
+    results: &[FileResult],
+    summaries: &[&Summary],
+    comparison: &BaselineComparison,
+) {
+    let output_dir = report_dir();
+    std::fs::create_dir_all(&output_dir).unwrap_or_else(|error| {
+        panic!("create report directory {}: {error}", output_dir.display())
+    });
+
+    let mut markdown = String::new();
+    for (format_results, summary) in split_results_by_format(results, summaries) {
+        writeln!(markdown, "{}", format_report(format_results, summary)).unwrap();
+    }
+    writeln!(markdown, "{}", format_baseline_comparison(comparison)).unwrap();
+    std::fs::write(output_dir.join("report.md"), markdown).expect("write bulk report.md");
+
+    let machine_report = MachineReport {
+        summaries: summaries
+            .iter()
+            .map(|summary| MachineSummary {
+                format: summary.format,
+                total: summary.total,
+                skipped: summary.skipped,
+                success: summary.success,
+                error: summary.error,
+                expected_error: summary.expected_error,
+                panic: summary.panic,
+                success_rate: summary.success_rate(),
+            })
+            .collect(),
+        files: results
+            .iter()
+            .map(|result| MachineFileResult {
+                path: fixture_key(&result.path),
+                outcome: result.outcome,
+                detail: result.detail.clone(),
+            })
+            .collect(),
+        comparison,
+    };
+    let json = serde_json::to_string_pretty(&machine_report).expect("serialize bulk report");
+    std::fs::write(output_dir.join("report.json"), format!("{json}\n"))
+        .expect("write bulk report.json");
+    println!("Gate reports written to: {}", output_dir.display());
+}
+
+fn split_results_by_format<'a>(
+    results: &'a [FileResult],
+    summaries: &'a [&Summary],
+) -> Vec<(&'a [FileResult], &'a Summary)> {
+    let mut offset: usize = 0;
+    summaries
+        .iter()
+        .map(|summary| {
+            let end = offset + summary.total;
+            let slice = &results[offset..end];
+            offset = end;
+            (slice, *summary)
+        })
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -568,6 +910,37 @@ fn test_bulk_all_formats() {
     );
 }
 
+#[test]
+#[ignore]
+fn test_bulk_regression_gate() {
+    let (docx_results, docx_summary) = run_bulk_test("DOCX", "docx", Format::Docx);
+    let (pptx_results, pptx_summary) = run_bulk_test("PPTX", "pptx", Format::Pptx);
+    let (xlsx_results, xlsx_summary) = run_bulk_test("XLSX", "xlsx", Format::Xlsx);
+    let all_results: Vec<FileResult> = docx_results
+        .into_iter()
+        .chain(pptx_results)
+        .chain(xlsx_results)
+        .collect();
+    let summaries = [&docx_summary, &pptx_summary, &xlsx_summary];
+
+    if std::env::var("UPDATE_BULK_BASELINE").as_deref() == Ok("1") {
+        update_baseline(&all_results);
+    }
+
+    let baseline = load_baseline();
+    let comparison = compare_against_baseline(&baseline, &all_results);
+    print_summary_table(&summaries);
+    println!("{}", format_baseline_comparison(&comparison));
+    write_gate_reports(&all_results, &summaries, &comparison);
+
+    assert!(
+        comparison.passed(),
+        "{} bulk fixture regression(s) detected; inspect {}/report.md",
+        comparison.regressions.len(),
+        report_dir().display()
+    );
+}
+
 /// Verifies that `is_denylisted` correctly identifies files on the denylist
 /// and does not reject normal files.
 #[test]
@@ -648,6 +1021,107 @@ fn test_summary_success_rate_excludes_expected_errors() {
     // effective_total = 10 - 2 = 8, success_rate = 7/8 = 87.5%
     assert_eq!(summary.effective_total(), 8);
     assert!((summary.success_rate() - 87.5).abs() < 0.01);
+}
+
+#[test]
+fn baseline_gate_rejects_previously_successful_fixture_errors() {
+    let baseline = baseline(&[
+        ("docx/stable.docx", Outcome::Success),
+        ("docx/known-error.docx", Outcome::Error),
+    ]);
+    let current = results(&[
+        ("docx/stable.docx", Outcome::Error),
+        ("docx/known-error.docx", Outcome::Error),
+    ]);
+
+    let comparison = compare_against_baseline(&baseline, &current);
+
+    assert!(!comparison.passed());
+    assert!(comparison.regressions.iter().any(|regression| {
+        regression.path == "docx/stable.docx"
+            && regression.kind == RegressionKind::PreviousSuccessFailed
+    }));
+}
+
+#[test]
+fn baseline_gate_rejects_missing_successes_and_any_panic() {
+    let baseline = baseline(&[("pptx/stable.pptx", Outcome::Success)]);
+    let current = results(&[("xlsx/new.xlsx", Outcome::Panic)]);
+
+    let comparison = compare_against_baseline(&baseline, &current);
+
+    assert!(!comparison.passed());
+    assert!(comparison.regressions.iter().any(|regression| {
+        regression.path == "pptx/stable.pptx"
+            && regression.kind == RegressionKind::PreviousSuccessMissing
+    }));
+    assert!(comparison.regressions.iter().any(|regression| {
+        regression.path == "xlsx/new.xlsx" && regression.kind == RegressionKind::Panic
+    }));
+}
+
+#[test]
+fn baseline_gate_allows_new_conversion_errors_and_records_improvements() {
+    let baseline = baseline(&[
+        ("xlsx/stable.xlsx", Outcome::Success),
+        ("xlsx/known-error.xlsx", Outcome::Error),
+    ]);
+    let current = results(&[
+        ("xlsx/stable.xlsx", Outcome::Success),
+        ("xlsx/known-error.xlsx", Outcome::Success),
+        ("xlsx/new-error.xlsx", Outcome::Error),
+    ]);
+
+    let comparison = compare_against_baseline(&baseline, &current);
+
+    assert!(comparison.passed());
+    assert_eq!(comparison.new_files, vec!["xlsx/new-error.xlsx"]);
+    assert_eq!(comparison.improvements, vec!["xlsx/known-error.xlsx"]);
+    assert_eq!(comparison.baseline_success_rate, 50.0);
+    assert_eq!(comparison.current_success_rate, 100.0);
+}
+
+#[test]
+fn bulk_report_uses_fixture_relative_paths() {
+    let fixture = fixtures_dir().join("pptx/libreoffice/example.pptx");
+    let results = vec![FileResult {
+        path: fixture,
+        outcome: Outcome::Error,
+        detail: "example error".to_string(),
+    }];
+    let summary = Summary {
+        format: "PPTX",
+        total: 1,
+        skipped: 0,
+        success: 0,
+        error: 1,
+        expected_error: 0,
+        panic: 0,
+    };
+
+    let report = format_report(&results, &summary);
+
+    assert!(report.contains("pptx/libreoffice/example.pptx"));
+    assert!(!report.contains(env!("CARGO_MANIFEST_DIR")));
+}
+
+fn baseline(entries: &[(&str, Outcome)]) -> BulkBaseline {
+    BulkBaseline::from_entries(
+        entries
+            .iter()
+            .map(|(path, outcome)| ((*path).to_string(), *outcome)),
+    )
+}
+
+fn results(entries: &[(&str, Outcome)]) -> Vec<FileResult> {
+    entries
+        .iter()
+        .map(|(path, outcome)| FileResult {
+            path: PathBuf::from(path),
+            outcome: *outcome,
+            detail: String::new(),
+        })
+        .collect()
 }
 
 /// Asserts that the overall conversion success rate meets the 70% target (US-205).
