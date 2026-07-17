@@ -525,3 +525,6 @@ mod placeholder_geometry_tests;
 
 #[path = "pptx_placeholder_style_tests.rs"]
 mod placeholder_style_tests;
+
+#[path = "pptx_background_ref_tests.rs"]
+mod background_ref_tests;
