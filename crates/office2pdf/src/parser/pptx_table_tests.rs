@@ -509,3 +509,45 @@ fn test_slide_table_coexists_with_shapes() {
     ));
     assert!(matches!(&page.elements[1].kind, FixedElementKind::Table(_)));
 }
+
+#[test]
+fn test_stale_small_frame_extent_does_not_shrink_row_heights() {
+    // Generators often leave the graphicFrame extent stale (smaller than the
+    // declared row heights). PowerPoint grows the table to its intrinsic
+    // height instead of compressing rows, so tr h acts as a minimum.
+    let rows_xml = format!(
+        "{}{}",
+        make_table_row_with_height(685_800, &["A1", "B1"]),
+        make_table_row_with_height(685_800, &["A2", "B2"]),
+    );
+    let table_frame = make_table_graphic_frame(
+        914_400,
+        914_400,
+        3_657_600,
+        914_400, // stale: much smaller than the 1_371_600 EMU row sum
+        &[1_828_800, 1_828_800],
+        &rows_xml,
+    );
+    let slide = make_slide_xml(&[table_frame]);
+    let data = build_test_pptx(SLIDE_CX, SLIDE_CY, &[slide]);
+
+    let parser = PptxParser;
+    let (doc, _warnings) = parser.parse(&data, &ConvertOptions::default()).unwrap();
+
+    let page = first_fixed_page(&doc);
+    let table = table_element(&page.elements[0]);
+
+    assert_eq!(table.rows[0].height, Some(54.0));
+    assert_eq!(table.rows[1].height, Some(54.0));
+}
+
+fn make_table_row_with_height(h_emu: i64, cells: &[&str]) -> String {
+    let mut xml = format!(r#"<a:tr h="{h_emu}">"#);
+    for text in cells {
+        xml.push_str(&format!(
+            r#"<a:tc><a:txBody><a:bodyPr/><a:p><a:r><a:rPr lang="en-US"/><a:t>{text}</a:t></a:r></a:p></a:txBody><a:tcPr/></a:tc>"#
+        ));
+    }
+    xml.push_str("</a:tr>");
+    xml
+}

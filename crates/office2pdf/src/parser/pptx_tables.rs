@@ -830,7 +830,11 @@ pub(super) fn scale_pptx_table_geometry_to_frame(
     }
 
     let intrinsic_height_pt: f64 = table.rows.iter().filter_map(|row| row.height).sum();
-    if intrinsic_height_pt > 0.0 && frame_height_pt > 0.0 {
+    if intrinsic_height_pt > 0.0 && frame_height_pt > intrinsic_height_pt {
+        // A frame taller than the declared rows stretches them proportionally,
+        // matching PowerPoint. A frame SHORTER than the rows is stale generator
+        // output: PowerPoint grows the table instead of compressing rows, so
+        // tr h acts as a minimum and must not be scaled down.
         let y_scale: f64 = frame_height_pt / intrinsic_height_pt;
         for row in &mut table.rows {
             if let Some(height) = row.height.as_mut() {
