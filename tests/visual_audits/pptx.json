@@ -1,0 +1,45 @@
+{
+  "format": "pptx",
+  "cases": [
+    {
+      "id": "group-rotation",
+      "fixture": "pptx/libreoffice/group-rot.pptx",
+      "focus": "group transforms"
+    },
+    {
+      "id": "image-crop-position",
+      "fixture": "pptx/libreoffice/crop-position.pptx",
+      "focus": "image crop"
+    },
+    {
+      "id": "master-two-layouts",
+      "fixture": "pptx/libreoffice/onemaster-twolayouts.pptx",
+      "focus": "master and layout"
+    },
+    {
+      "id": "theme-table",
+      "fixture": "pptx/poi/table-with-theme.pptx",
+      "focus": "theme table"
+    },
+    {
+      "id": "picture-transparency",
+      "fixture": "pptx/picture-transparency.pptx",
+      "focus": "image transparency"
+    },
+    {
+      "id": "smartart",
+      "fixture": "pptx/SmartArt.pptx",
+      "focus": "SmartArt"
+    },
+    {
+      "id": "bar-chart",
+      "fixture": "pptx/bar-chart.pptx",
+      "focus": "chart"
+    },
+    {
+      "id": "shape-text-rotation",
+      "fixture": "pptx/libreoffice/shape-text-rotate.pptx",
+      "focus": "text rotation"
+    }
+  ]
+}
