@@ -127,19 +127,79 @@ fn generate_powerpoint_ground_truth(
     );
 }
 
-#[test]
-fn pptx_visual_audit_manifest_covers_priority_areas() {
-    let manifest_path = project_root().join("tests/visual_audits/pptx.json");
-    let manifest = load_visual_audit_manifest(&manifest_path);
+fn generate_excel_ground_truth(
+    manifest: &VisualAuditManifest,
+    fixtures_dir: &Path,
+    ground_truth_dir: &Path,
+) {
+    assert_eq!(
+        std::env::consts::OS,
+        "macos",
+        "Microsoft Excel GT export is only available on macOS"
+    );
+    std::fs::create_dir_all(ground_truth_dir).expect("create Excel GT directory");
+    let script = project_root().join("scripts/macos/export_excel_pdfs.applescript");
+    let mut command = Command::new("osascript");
+    command.arg(script).arg(ground_truth_dir);
+    for case in &manifest.cases {
+        command.arg(&case.id).arg(fixtures_dir.join(&case.fixture));
+    }
+    let output = command.output().expect("run Excel GT exporter");
+    assert!(
+        output.status.success(),
+        "Excel GT export failed:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
 
-    assert_eq!(manifest.format, "pptx");
-    assert!(manifest.cases.len() >= 8);
+    for case in &manifest.cases {
+        let prefix = format!("{}-sheet-", case.id);
+        let mut sheet_pdfs: Vec<PathBuf> = std::fs::read_dir(ground_truth_dir)
+            .expect("read Excel GT directory")
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.file_name().is_some_and(|name| {
+                    let name = name.to_string_lossy();
+                    name.starts_with(&prefix) && name.ends_with(".pdf")
+                })
+            })
+            .collect();
+        sheet_pdfs.sort();
+        assert!(
+            !sheet_pdfs.is_empty(),
+            "Excel exported no visible worksheets for {}",
+            case.id
+        );
+
+        let combined_pdf = ground_truth_dir.join(format!("{}.pdf", case.id));
+        if sheet_pdfs.len() == 1 {
+            std::fs::copy(&sheet_pdfs[0], &combined_pdf).expect("copy single-sheet Excel GT");
+        } else {
+            let status = Command::new("pdfunite")
+                .args(&sheet_pdfs)
+                .arg(&combined_pdf)
+                .status()
+                .expect("run pdfunite for Excel GT");
+            assert!(
+                status.success(),
+                "pdfunite failed while combining Excel GT for {}",
+                case.id
+            );
+        }
+        for sheet_pdf in sheet_pdfs {
+            std::fs::remove_file(sheet_pdf).expect("remove intermediate Excel sheet PDF");
+        }
+    }
+}
+
+fn assert_manifest_cases(manifest: &VisualAuditManifest, extension: &str) {
     let fixtures_dir = project_root().join("tests/fixtures");
     let mut ids: BTreeSet<&str> = BTreeSet::new();
     for case in &manifest.cases {
         assert!(
             ids.insert(&case.id),
-            "duplicate PPTX visual audit id: {}",
+            "duplicate {extension} visual audit id: {}",
             case.id
         );
         assert!(
@@ -153,10 +213,20 @@ fn pptx_visual_audit_manifest_covers_priority_areas() {
         );
         assert!(
             fixtures_dir.join(&case.fixture).is_file(),
-            "missing PPTX visual audit fixture: {}",
+            "missing {extension} visual audit fixture: {}",
             case.fixture
         );
     }
+}
+
+#[test]
+fn pptx_visual_audit_manifest_covers_priority_areas() {
+    let manifest_path = project_root().join("tests/visual_audits/pptx.json");
+    let manifest = load_visual_audit_manifest(&manifest_path);
+
+    assert_eq!(manifest.format, "pptx");
+    assert!(manifest.cases.len() >= 8);
+    assert_manifest_cases(&manifest, "PPTX");
     for focus in [
         "group transforms",
         "image crop",
@@ -175,8 +245,37 @@ fn pptx_visual_audit_manifest_covers_priority_areas() {
 }
 
 #[test]
-#[ignore]
-fn test_public_pptx_visual_audit() {
+fn xlsx_visual_audit_manifest_covers_priority_areas() {
+    let manifest_path = project_root().join("tests/visual_audits/xlsx.json");
+    let manifest = load_visual_audit_manifest(&manifest_path);
+
+    assert_eq!(manifest.format, "xlsx");
+    assert!(manifest.cases.len() >= 10);
+    assert_manifest_cases(&manifest, "XLSX");
+    for focus in [
+        "page setup",
+        "headers and footers",
+        "repeating titles",
+        "row and column sizing",
+        "right-to-left",
+        "number formats",
+        "conditional formatting",
+        "drawings",
+        "charts",
+        "text boxes",
+    ] {
+        assert!(
+            manifest.cases.iter().any(|case| case.focus == focus),
+            "missing XLSX visual audit focus: {focus}"
+        );
+    }
+}
+
+fn run_visual_audit(
+    manifest_name: &str,
+    format: Format,
+    generate_ground_truth: fn(&VisualAuditManifest, &Path, &Path),
+) {
     assert!(
         common::is_pdftoppm_available(),
         "pdftoppm (poppler-utils) is required"
@@ -190,18 +289,23 @@ fn test_public_pptx_visual_audit() {
         .ok()
         .and_then(|value| value.parse().ok())
         .unwrap_or(150);
-    let manifest =
-        load_visual_audit_manifest(&project_root().join("tests/visual_audits/pptx.json"));
+    let manifest = load_visual_audit_manifest(
+        &project_root().join(format!("tests/visual_audits/{manifest_name}.json")),
+    );
     let fixtures_dir = project_root().join("tests/fixtures");
     let report_dir = std::env::var_os("VISUAL_AUDIT_DIR").map_or_else(
-        || project_root().join("target/visual-audit/pptx"),
+        || {
+            project_root()
+                .join("target/visual-audit")
+                .join(manifest_name)
+        },
         PathBuf::from,
     );
     let ground_truth_dir = report_dir.join("ground-truth-pdf");
     std::fs::create_dir_all(&report_dir).expect("create visual audit report directory");
 
     if std::env::var("GENERATE_MICROSOFT_GT").as_deref() == Ok("1") {
-        generate_powerpoint_ground_truth(&manifest, &fixtures_dir, &ground_truth_dir);
+        generate_ground_truth(&manifest, &fixtures_dir, &ground_truth_dir);
     }
 
     let mut results: Vec<VisualAuditResult> = Vec::new();
@@ -210,7 +314,7 @@ fn test_public_pptx_visual_audit() {
         let ground_truth_pdf = ground_truth_dir.join(format!("{}.pdf", case.id));
         assert!(
             ground_truth_pdf.is_file(),
-            "missing Microsoft PowerPoint GT PDF for {}: run with GENERATE_MICROSOFT_GT=1",
+            "missing Microsoft GT PDF for {}: run with GENERATE_MICROSOFT_GT=1",
             case.id
         );
 
@@ -220,9 +324,8 @@ fn test_public_pptx_visual_audit() {
         }
         std::fs::create_dir_all(&case_dir).expect("create visual audit case directory");
 
-        let input = std::fs::read(&fixture_path).expect("read PPTX visual audit fixture");
-        let conversion =
-            office2pdf::convert_bytes(&input, Format::Pptx, &ConvertOptions::default());
+        let input = std::fs::read(&fixture_path).expect("read visual audit fixture");
+        let conversion = office2pdf::convert_bytes(&input, format, &ConvertOptions::default());
         let Ok(conversion) = conversion else {
             results.push(VisualAuditResult {
                 id: case.id.clone(),
@@ -268,5 +371,21 @@ fn test_public_pptx_visual_audit() {
     let report_json = serde_json::to_string_pretty(&report).expect("serialize visual audit report");
     std::fs::write(report_dir.join("report.json"), format!("{report_json}\n"))
         .expect("write visual audit report");
-    println!("PPTX visual audit report: {}", report_dir.display());
+    println!(
+        "{} visual audit report: {}",
+        manifest.format.to_uppercase(),
+        report_dir.display()
+    );
+}
+
+#[test]
+#[ignore]
+fn test_public_pptx_visual_audit() {
+    run_visual_audit("pptx", Format::Pptx, generate_powerpoint_ground_truth);
+}
+
+#[test]
+#[ignore]
+fn test_public_xlsx_visual_audit() {
+    run_visual_audit("xlsx", Format::Xlsx, generate_excel_ground_truth);
 }
