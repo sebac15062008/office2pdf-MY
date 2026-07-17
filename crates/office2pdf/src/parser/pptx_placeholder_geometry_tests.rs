@@ -13,7 +13,11 @@ const MASTER_FOOTER: &str = "</p:spTree></p:cSld></p:sldMaster>";
 /// A placeholder `<p:sp>` for a slide, layout, or master.
 /// `ph_attrs` is the raw attribute string of `<p:ph>` (e.g. `type="title"` or `idx="1"`).
 /// `xfrm_emu` is `Some((x, y, cx, cy))` for an explicit `<a:xfrm>`, or `None` to inherit.
-fn make_placeholder_sp(ph_attrs: &str, xfrm_emu: Option<(i64, i64, i64, i64)>, text: &str) -> String {
+fn make_placeholder_sp(
+    ph_attrs: &str,
+    xfrm_emu: Option<(i64, i64, i64, i64)>,
+    text: &str,
+) -> String {
     let sp_pr: String = match xfrm_emu {
         Some((x, y, cx, cy)) => format!(
             r#"<p:spPr><a:xfrm><a:off x="{x}" y="{y}"/><a:ext cx="{cx}" cy="{cy}"/></a:xfrm></p:spPr>"#
@@ -172,11 +176,8 @@ fn test_body_placeholders_match_layout_by_idx() {
 fn test_layout_placeholder_without_geometry_falls_back_to_master() {
     // The layout declares the placeholder but omits <a:xfrm>; geometry must
     // come from the master's matching placeholder.
-    let slide = make_slide_with_shapes(&[make_placeholder_sp(
-        r#"type="body" idx="1""#,
-        None,
-        "Hello",
-    )]);
+    let slide =
+        make_slide_with_shapes(&[make_placeholder_sp(r#"type="body" idx="1""#, None, "Hello")]);
     let layout = make_layout_with_shapes(&[make_placeholder_sp(
         r#"type="body" idx="1""#,
         None,

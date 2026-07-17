@@ -151,58 +151,57 @@ fn scan_layer_placeholders(xml: &str) -> Vec<LayerPlaceholder> {
     let mut entries: Vec<LayerPlaceholder> = Vec::new();
     let mut current: Option<Current> = None;
 
-    let handle_start = |current: &mut Option<Current>, e: &BytesStart| {
-        match e.local_name().as_ref() {
-            b"sp" | b"pic" => {
-                *current = Some(Current {
-                    ph_type: None,
-                    ph_idx: None,
-                    has_ph: false,
-                    x: None,
-                    y: None,
-                    cx: None,
-                    cy: None,
-                    in_sp_pr: false,
-                    in_xfrm: false,
-                });
-            }
-            b"ph" => {
-                if let Some(state) = current.as_mut() {
-                    state.has_ph = true;
-                    state.ph_type = get_attr_str(e, b"type");
-                    state.ph_idx = get_attr_str(e, b"idx");
-                }
-            }
-            b"spPr" => {
-                if let Some(state) = current.as_mut() {
-                    state.in_sp_pr = true;
-                }
-            }
-            b"xfrm" => {
-                if let Some(state) = current.as_mut()
-                    && state.in_sp_pr
-                {
-                    state.in_xfrm = true;
-                }
-            }
-            b"off" => {
-                if let Some(state) = current.as_mut()
-                    && state.in_xfrm
-                {
-                    state.x = get_attr_i64(e, b"x");
-                    state.y = get_attr_i64(e, b"y");
-                }
-            }
-            b"ext" => {
-                if let Some(state) = current.as_mut()
-                    && state.in_xfrm
-                {
-                    state.cx = get_attr_i64(e, b"cx");
-                    state.cy = get_attr_i64(e, b"cy");
-                }
-            }
-            _ => {}
+    let handle_start = |current: &mut Option<Current>, e: &BytesStart| match e.local_name().as_ref()
+    {
+        b"sp" | b"pic" => {
+            *current = Some(Current {
+                ph_type: None,
+                ph_idx: None,
+                has_ph: false,
+                x: None,
+                y: None,
+                cx: None,
+                cy: None,
+                in_sp_pr: false,
+                in_xfrm: false,
+            });
         }
+        b"ph" => {
+            if let Some(state) = current.as_mut() {
+                state.has_ph = true;
+                state.ph_type = get_attr_str(e, b"type");
+                state.ph_idx = get_attr_str(e, b"idx");
+            }
+        }
+        b"spPr" => {
+            if let Some(state) = current.as_mut() {
+                state.in_sp_pr = true;
+            }
+        }
+        b"xfrm" => {
+            if let Some(state) = current.as_mut()
+                && state.in_sp_pr
+            {
+                state.in_xfrm = true;
+            }
+        }
+        b"off" => {
+            if let Some(state) = current.as_mut()
+                && state.in_xfrm
+            {
+                state.x = get_attr_i64(e, b"x");
+                state.y = get_attr_i64(e, b"y");
+            }
+        }
+        b"ext" => {
+            if let Some(state) = current.as_mut()
+                && state.in_xfrm
+            {
+                state.cx = get_attr_i64(e, b"cx");
+                state.cy = get_attr_i64(e, b"cy");
+            }
+        }
+        _ => {}
     };
 
     loop {

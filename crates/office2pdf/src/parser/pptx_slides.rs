@@ -205,10 +205,8 @@ pub(super) fn parse_single_slide<R: Read + std::io::Seek>(
     let slide_images: SlideImageMap = load_slide_images(slide_path, archive);
     let mut warnings: Vec<ConvertWarning> = Vec::new();
 
-    let placeholder_geometry: PlaceholderGeometryMap = PlaceholderGeometryMap::build(
-        chain.layout_xml.as_deref(),
-        chain.master_xml.as_deref(),
-    );
+    let placeholder_geometry: PlaceholderGeometryMap =
+        PlaceholderGeometryMap::build(chain.layout_xml.as_deref(), chain.master_xml.as_deref());
 
     let (slide_elements, slide_warnings) = parse_slide_xml(
         &chain.slide_xml,
@@ -1439,7 +1437,8 @@ impl<'a> SlideXmlParser<'a> {
                     // Placeholder content is only visible when the slide itself
                     // overrides it; master/layout placeholder text (e.g.
                     // "마스터 제목 스타일 편집") should never be rendered.
-                    if self.shape.has_placeholder && !self.shape.has_explicit_xfrm
+                    if self.shape.has_placeholder
+                        && !self.shape.has_explicit_xfrm
                         && let Some(geometry) = self.placeholder_geometry.and_then(|map| {
                             map.lookup(self.shape.ph_type.as_deref(), self.shape.ph_idx.as_deref())
                         })
@@ -1534,7 +1533,8 @@ impl<'a> SlideXmlParser<'a> {
                 self.in_text = false;
             }
             b"pic" if self.in_pic => {
-                if self.pic.has_placeholder && !self.pic.has_explicit_xfrm
+                if self.pic.has_placeholder
+                    && !self.pic.has_explicit_xfrm
                     && let Some(geometry) = self.placeholder_geometry.and_then(|map| {
                         map.lookup(self.pic.ph_type.as_deref(), self.pic.ph_idx.as_deref())
                     })
