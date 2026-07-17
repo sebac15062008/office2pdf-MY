@@ -22,8 +22,11 @@ pub(super) fn extract_cell_text_style(cell: &umya_spreadsheet::Cell) -> TextStyl
 
     let bold = if *font.get_bold() { Some(true) } else { None };
     let italic = if *font.get_italic() { Some(true) } else { None };
-    let underline = match font.get_underline() {
-        "none" | "" => None,
+    // Font::get_underline() reads the raw enum value, whose library default is
+    // "single" even when the style has no <u> element at all. get_val() checks
+    // element presence, so only explicit underlines survive.
+    let underline = match font.get_font_underline().get_val() {
+        umya_spreadsheet::UnderlineValues::None => None,
         _ => Some(true),
     };
     let strikethrough = if *font.get_strikethrough() {
