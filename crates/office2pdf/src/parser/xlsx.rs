@@ -13,6 +13,8 @@ mod xlsx_cells;
 mod xlsx_drawing;
 #[path = "xlsx_hf.rs"]
 mod xlsx_hf;
+#[path = "xlsx_pagination.rs"]
+mod xlsx_pagination;
 #[path = "xlsx_style.rs"]
 mod xlsx_style;
 
@@ -90,7 +92,7 @@ impl XlsxParser {
 
                 let doc = Document {
                     metadata: metadata.clone(),
-                    pages: vec![Page::Sheet(SheetPage {
+                    pages: xlsx_pagination::split_sheet_page_by_width(SheetPage {
                         name: sheet_name.clone(),
                         size: PageSize::default(),
                         margins: Margins::default(),
@@ -110,7 +112,10 @@ impl XlsxParser {
                         } else {
                             vec![]
                         },
-                    })],
+                    })
+                    .into_iter()
+                    .map(Page::Sheet)
+                    .collect(),
                     styles: StyleSheet::default(),
                 };
 
@@ -182,22 +187,26 @@ impl Parser for XlsxParser {
 
             if row_breaks.is_empty() {
                 // No page breaks — single page
-                pages.push(Page::Sheet(SheetPage {
-                    name: sheet_name,
-                    size: PageSize::default(),
-                    margins: Margins::default(),
-                    table: Table {
-                        rows,
-                        column_widths: ctx.column_widths,
-                        header_row_count: 0,
-                        alignment: None,
-                        default_cell_padding: None,
-                        use_content_driven_row_heights: false,
-                    },
-                    header: sheet_header.clone(),
-                    footer: sheet_footer.clone(),
-                    charts: sheet_charts,
-                }));
+                pages.extend(
+                    xlsx_pagination::split_sheet_page_by_width(SheetPage {
+                        name: sheet_name,
+                        size: PageSize::default(),
+                        margins: Margins::default(),
+                        table: Table {
+                            rows,
+                            column_widths: ctx.column_widths,
+                            header_row_count: 0,
+                            alignment: None,
+                            default_cell_padding: None,
+                            use_content_driven_row_heights: false,
+                        },
+                        header: sheet_header.clone(),
+                        footer: sheet_footer.clone(),
+                        charts: sheet_charts,
+                    })
+                    .into_iter()
+                    .map(Page::Sheet),
+                );
             } else {
                 // Split rows at break points
                 // Breaks are 1-indexed row numbers; break after that row
@@ -223,27 +232,31 @@ impl Parser for XlsxParser {
                 // For page-break segments, attach all charts to the first segment
                 let mut first_segment = true;
                 for segment in segments {
-                    pages.push(Page::Sheet(SheetPage {
-                        name: sheet_name.clone(),
-                        size: PageSize::default(),
-                        margins: Margins::default(),
-                        table: Table {
-                            rows: segment,
-                            column_widths: ctx.column_widths.clone(),
-                            header_row_count: 0,
-                            alignment: None,
-                            default_cell_padding: None,
-                            use_content_driven_row_heights: false,
-                        },
-                        header: sheet_header.clone(),
-                        footer: sheet_footer.clone(),
-                        charts: if first_segment {
-                            first_segment = false;
-                            std::mem::take(&mut sheet_charts)
-                        } else {
-                            vec![]
-                        },
-                    }));
+                    pages.extend(
+                        xlsx_pagination::split_sheet_page_by_width(SheetPage {
+                            name: sheet_name.clone(),
+                            size: PageSize::default(),
+                            margins: Margins::default(),
+                            table: Table {
+                                rows: segment,
+                                column_widths: ctx.column_widths.clone(),
+                                header_row_count: 0,
+                                alignment: None,
+                                default_cell_padding: None,
+                                use_content_driven_row_heights: false,
+                            },
+                            header: sheet_header.clone(),
+                            footer: sheet_footer.clone(),
+                            charts: if first_segment {
+                                first_segment = false;
+                                std::mem::take(&mut sheet_charts)
+                            } else {
+                                vec![]
+                            },
+                        })
+                        .into_iter()
+                        .map(Page::Sheet),
+                    );
                 }
             }
         }
