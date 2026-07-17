@@ -151,39 +151,42 @@ fn collect_chart_elements<R: Read + std::io::Seek>(
 
 // ── Background resolution ───────────────────────────────────────────────
 
-/// Resolve the slide background by checking slide -> layout -> master in order.
-/// If a gradient is found on the slide, its first stop color is used as the
-/// solid fallback; otherwise the first solid color found in the chain wins.
+/// Resolve the slide background by checking slide -> layout -> master in
+/// order. Within a layer, a `<p:bgPr>` gradient wins over a solid fill, and
+/// `<p:bgRef>` theme references resolve through the theme fill style lists.
+/// The first layer with a resolvable background wins.
 fn resolve_slide_background(
     chain: &SlideInheritanceChain,
     theme: &ThemeData,
 ) -> (Option<Color>, Option<GradientFill>) {
-    let gradient = parse_background_gradient(&chain.slide_xml, theme, &chain.slide_color_map);
+    let layers: [(Option<&str>, &ColorMapData); 3] = [
+        (Some(chain.slide_xml.as_str()), &chain.slide_color_map),
+        (
+            chain.layout_xml.as_deref(),
+            chain
+                .layout_color_map
+                .as_ref()
+                .unwrap_or(&chain.master_color_map),
+        ),
+        (chain.master_xml.as_deref(), &chain.master_color_map),
+    ];
 
-    if gradient.is_some() {
-        let fallback_color = gradient
-            .as_ref()
-            .and_then(|g| g.stops.first().map(|s| s.color));
-        return (fallback_color, gradient);
+    for (layer_xml, color_map) in layers {
+        let Some(xml) = layer_xml else { continue };
+
+        if let Some(gradient) = parse_background_gradient(xml, theme, color_map) {
+            let fallback_color = gradient.stops.first().map(|s| s.color);
+            return (fallback_color, Some(gradient));
+        }
+        if let Some(color) = parse_background_color(xml, theme, color_map) {
+            return (Some(color), None);
+        }
+        if let Some((color, gradient)) = parse_background_ref(xml, theme, color_map) {
+            return (color, gradient);
+        }
     }
 
-    let solid_color = parse_background_color(&chain.slide_xml, theme, &chain.slide_color_map)
-        .or_else(|| {
-            chain.layout_xml.as_deref().and_then(|xml| {
-                chain
-                    .layout_color_map
-                    .as_ref()
-                    .and_then(|map| parse_background_color(xml, theme, map))
-            })
-        })
-        .or_else(|| {
-            chain
-                .master_xml
-                .as_deref()
-                .and_then(|xml| parse_background_color(xml, theme, &chain.master_color_map))
-        });
-
-    (solid_color, None)
+    (None, None)
 }
 
 // ── Public entry point ──────────────────────────────────────────────────

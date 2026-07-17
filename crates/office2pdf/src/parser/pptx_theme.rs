@@ -11,6 +11,12 @@ pub(super) struct ThemeData {
     pub(super) major_font: Option<String>,
     /// Minor (body) font family name.
     pub(super) minor_font: Option<String>,
+    /// Raw XML of each `<a:fmtScheme>/<a:fillStyleLst>` entry, for
+    /// `<p:bgRef>` idx 1-999 resolution.
+    pub(super) fill_styles: Vec<String>,
+    /// Raw XML of each `<a:fmtScheme>/<a:bgFillStyleLst>` entry, for
+    /// `<p:bgRef>` idx ≥ 1001 resolution.
+    pub(super) bg_fill_styles: Vec<String>,
 }
 
 /// Effective scheme-color aliases for a slide part.
@@ -444,7 +450,143 @@ pub(super) fn parse_theme_xml(xml: &str) -> ThemeData {
         }
     }
 
+    theme.fill_styles = extract_fill_style_entries(xml, b"fillStyleLst");
+    theme.bg_fill_styles = extract_fill_style_entries(xml, b"bgFillStyleLst");
+
     theme
+}
+
+/// Extract the raw XML of each top-level fill entry (`<a:solidFill>`,
+/// `<a:gradFill>`, ...) inside the named `<a:fmtScheme>` list.
+fn extract_fill_style_entries(xml: &str, list_tag: &[u8]) -> Vec<String> {
+    let mut reader = Reader::from_str(xml);
+    let mut entries: Vec<String> = Vec::new();
+    let mut in_list = false;
+    let mut child_depth: usize = 0;
+    let mut entry_start: usize = 0;
+
+    loop {
+        let position_before: usize = reader.buffer_position() as usize;
+        match reader.read_event() {
+            Ok(Event::Start(ref e)) => {
+                if e.local_name().as_ref() == list_tag {
+                    in_list = true;
+                    child_depth = 0;
+                } else if in_list {
+                    if child_depth == 0 {
+                        entry_start = position_before;
+                    }
+                    child_depth += 1;
+                }
+            }
+            Ok(Event::Empty(_)) => {
+                if in_list && child_depth == 0 {
+                    let position_after: usize = reader.buffer_position() as usize;
+                    entries.push(xml[position_before..position_after].to_string());
+                }
+            }
+            Ok(Event::End(ref e)) => {
+                if in_list {
+                    if e.local_name().as_ref() == list_tag {
+                        return entries;
+                    }
+                    if child_depth > 0 {
+                        child_depth -= 1;
+                        if child_depth == 0 {
+                            let position_after: usize = reader.buffer_position() as usize;
+                            entries.push(xml[entry_start..position_after].to_string());
+                        }
+                    }
+                }
+            }
+            Ok(Event::Eof) | Err(_) => break,
+            _ => {}
+        }
+    }
+
+    entries
+}
+
+/// Resolve a `<p:bg><p:bgRef idx="N">` background reference against the
+/// theme's fill style lists (ECMA-376 §19.3.1.2: idx 1-999 → fillStyleLst,
+/// idx ≥ 1001 → bgFillStyleLst; the entry's `phClr` takes the bgRef child
+/// color). Returns `None` when the XML has no resolvable `bgRef`.
+pub(super) fn parse_background_ref(
+    xml: &str,
+    theme: &ThemeData,
+    color_map: &ColorMapData,
+) -> Option<(Option<Color>, Option<GradientFill>)> {
+    let mut reader = Reader::from_str(xml);
+    let mut in_bg = false;
+    let mut in_bg_ref = false;
+    let mut style_index: i64 = 0;
+    let mut base_color: Option<Color> = None;
+
+    loop {
+        match reader.read_event() {
+            Ok(Event::Start(ref e)) => match e.local_name().as_ref() {
+                b"bg" => in_bg = true,
+                b"bgRef" if in_bg => {
+                    in_bg_ref = true;
+                    style_index = get_attr_i64(e, b"idx").unwrap_or(0);
+                }
+                b"srgbClr" | b"schemeClr" | b"sysClr" if in_bg_ref => {
+                    base_color = parse_color_from_start(&mut reader, e, theme, color_map).color;
+                }
+                _ => {}
+            },
+            Ok(Event::Empty(ref e)) => match e.local_name().as_ref() {
+                b"bgRef" if in_bg => {
+                    in_bg_ref = true;
+                    style_index = get_attr_i64(e, b"idx").unwrap_or(0);
+                }
+                b"srgbClr" | b"schemeClr" | b"sysClr" if in_bg_ref => {
+                    base_color = parse_color_from_empty(e, theme, color_map).color;
+                }
+                _ => {}
+            },
+            Ok(Event::End(ref e)) => match e.local_name().as_ref() {
+                b"bgRef" | b"bg" => break,
+                _ => {}
+            },
+            Ok(Event::Eof) | Err(_) => break,
+            _ => {}
+        }
+    }
+
+    if !in_bg_ref {
+        return None;
+    }
+    let entry: &str = if style_index >= 1001 {
+        theme.bg_fill_styles.get((style_index - 1001) as usize)?
+    } else if style_index >= 1 {
+        theme.fill_styles.get((style_index - 1) as usize)?
+    } else {
+        return None;
+    };
+
+    // Make the entry's phClr placeholders resolve to the bgRef child color,
+    // then reuse the bgPr parsers on a synthetic <p:bg> wrapper so gradients
+    // and color transforms take the existing code path.
+    let mut theme_with_placeholder: ThemeData = theme.clone();
+    if let Some(color) = base_color {
+        theme_with_placeholder
+            .colors
+            .insert("phClr".to_string(), color);
+    }
+    let synthetic_bg: String = format!("<p:bg><p:bgPr>{entry}<a:effectLst/></p:bgPr></p:bg>");
+    let gradient: Option<GradientFill> =
+        parse_background_gradient(&synthetic_bg, &theme_with_placeholder, color_map);
+    let color: Option<Color> =
+        parse_background_color(&synthetic_bg, &theme_with_placeholder, color_map).or_else(|| {
+            gradient
+                .as_ref()
+                .and_then(|g| g.stops.first().map(|s| s.color))
+        });
+    if color.is_none() && gradient.is_none() {
+        return None;
+    }
+    Some((color, gradient))
 }
 
 /// Parse background color from a `<p:bg>` element within a slide/layout/master XML.
