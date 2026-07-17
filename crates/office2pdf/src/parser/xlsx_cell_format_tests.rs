@@ -676,3 +676,24 @@ fn test_cell_without_alignment_keeps_default() {
     assert_eq!(paragraph.style.alignment, None);
     assert_eq!(tp.table.rows[0].cells[0].vertical_align, None);
 }
+
+#[test]
+fn test_percent_format_keeps_decimal_precision() {
+    // A cached formula ratio formatted as "0.0%" must not round to an
+    // integer first (0.17309... rendered "17.0%" instead of "17.3%").
+    let data = build_xlsx_formatted(|sheet| {
+        let cell = sheet.get_cell_mut("A1");
+        cell.set_value_number(0.1730909090909091);
+        cell.get_style_mut()
+            .get_number_format_mut()
+            .set_format_code("0.0%");
+    });
+    let parser = XlsxParser;
+    let (doc, _warnings) = parser.parse(&data, &ConvertOptions::default()).unwrap();
+
+    let tp = get_sheet_page(&doc, 0);
+    let Block::Paragraph(paragraph) = &tp.table.rows[0].cells[0].content[0] else {
+        panic!("expected paragraph");
+    };
+    assert_eq!(paragraph.runs[0].text, "17.3%");
+}
