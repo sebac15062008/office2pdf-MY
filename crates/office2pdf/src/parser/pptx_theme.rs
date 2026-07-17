@@ -80,25 +80,45 @@ pub(super) fn parse_master_color_map(xml: &str) -> ColorMapData {
     default_color_map()
 }
 
-pub(super) fn parse_master_other_style(
+/// The three text-style buckets of a master's `<p:txStyles>`.
+/// Placeholders resolve against them by type: title family → `title`,
+/// body/content types → `body`, `dt`/`ftr`/`sldNum` → `other`.
+#[derive(Debug, Clone, Default)]
+pub(super) struct PptxMasterTextStyles {
+    pub(super) title: PptxTextBodyStyleDefaults,
+    pub(super) body: PptxTextBodyStyleDefaults,
+    pub(super) other: PptxTextBodyStyleDefaults,
+}
+
+pub(super) fn parse_master_text_styles(
     xml: &str,
     theme: &ThemeData,
     color_map: &ColorMapData,
-) -> PptxTextBodyStyleDefaults {
+) -> PptxMasterTextStyles {
     let mut reader = Reader::from_str(xml);
+    let mut styles = PptxMasterTextStyles::default();
 
     loop {
         match reader.read_event() {
-            Ok(Event::Start(ref e)) if e.local_name().as_ref() == b"otherStyle" => {
-                return parse_pptx_list_style(&mut reader, theme, color_map);
-            }
+            Ok(Event::Start(ref e)) => match e.local_name().as_ref() {
+                b"titleStyle" => {
+                    styles.title = parse_pptx_list_style(&mut reader, theme, color_map);
+                }
+                b"bodyStyle" => {
+                    styles.body = parse_pptx_list_style(&mut reader, theme, color_map);
+                }
+                b"otherStyle" => {
+                    styles.other = parse_pptx_list_style(&mut reader, theme, color_map);
+                }
+                _ => {}
+            },
             Ok(Event::Eof) => break,
             Err(_) => break,
             _ => {}
         }
     }
 
-    PptxTextBodyStyleDefaults::default()
+    styles
 }
 
 fn parse_color_map_override(xml: &str) -> Option<ColorMapData> {

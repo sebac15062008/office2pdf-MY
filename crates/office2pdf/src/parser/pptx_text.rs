@@ -321,10 +321,10 @@ impl ListStyleParseState {
     // ── End-element state transitions ────────────────────────────────
 
     /// Process an `Event::End` element. Returns `true` when the outer container
-    /// (`lstStyle` / `otherStyle`) is closed and parsing should stop.
+    /// (`lstStyle` or a master `txStyles` bucket) is closed and parsing should stop.
     fn handle_end_element(&mut self, local_name: &[u8]) -> bool {
         match local_name {
-            b"lstStyle" | b"otherStyle" => return true,
+            b"lstStyle" | b"otherStyle" | b"titleStyle" | b"bodyStyle" => return true,
             b"defPPr" => {
                 self.active_paragraph_target = None;
                 self.is_in_line_spacing = false;

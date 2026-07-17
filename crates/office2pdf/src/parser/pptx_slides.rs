@@ -17,7 +17,7 @@ struct SlideInheritanceChain {
     master_path: Option<String>,
     master_xml: Option<String>,
     master_color_map: ColorMapData,
-    master_text_style_defaults: PptxTextBodyStyleDefaults,
+    master_text_styles: PptxMasterTextStyles,
 }
 
 /// Build the full inheritance chain by reading master/layout/slide XML and
@@ -41,9 +41,9 @@ fn resolve_inheritance_chain<R: Read + std::io::Seek>(
         .as_deref()
         .map(parse_master_color_map)
         .unwrap_or_else(default_color_map);
-    let master_text_style_defaults: PptxTextBodyStyleDefaults = master_xml
+    let master_text_styles: PptxMasterTextStyles = master_xml
         .as_deref()
-        .map(|xml| parse_master_other_style(xml, theme, &master_color_map))
+        .map(|xml| parse_master_text_styles(xml, theme, &master_color_map))
         .unwrap_or_default();
 
     let slide_color_map: ColorMapData = resolve_effective_color_map(&slide_xml, &master_color_map);
@@ -60,7 +60,7 @@ fn resolve_inheritance_chain<R: Read + std::io::Seek>(
         master_path,
         master_xml,
         master_color_map,
-        master_text_style_defaults,
+        master_text_styles,
     })
 }
 
@@ -228,8 +228,17 @@ pub(super) fn parse_single_slide<R: Read + std::io::Seek>(
     let slide_images: SlideImageMap = load_slide_images(slide_path, archive);
     let mut warnings: Vec<ConvertWarning> = Vec::new();
 
-    let placeholder_geometry: PlaceholderGeometryMap =
-        PlaceholderGeometryMap::build(chain.layout_xml.as_deref(), chain.master_xml.as_deref());
+    let placeholder_geometry: PlaceholderGeometryMap = PlaceholderGeometryMap::build(
+        chain.layout_xml.as_deref(),
+        chain.master_xml.as_deref(),
+        theme,
+        chain
+            .layout_color_map
+            .as_ref()
+            .unwrap_or(&chain.master_color_map),
+        &chain.master_color_map,
+        chain.master_text_styles.clone(),
+    );
 
     let (slide_elements, slide_warnings) = parse_slide_xml(
         &chain.slide_xml,
@@ -237,7 +246,7 @@ pub(super) fn parse_single_slide<R: Read + std::io::Seek>(
         theme,
         &chain.slide_color_map,
         slide_label,
-        &chain.master_text_style_defaults,
+        &chain.master_text_styles.other,
         table_styles,
         Some(&placeholder_geometry),
     )?;
@@ -256,7 +265,7 @@ pub(super) fn parse_single_slide<R: Read + std::io::Seek>(
             &chain.master_color_map,
             theme,
             &master_label,
-            &chain.master_text_style_defaults,
+            &chain.master_text_styles.other,
             archive,
         );
         elements.extend(master_elems);
@@ -275,7 +284,7 @@ pub(super) fn parse_single_slide<R: Read + std::io::Seek>(
             color_map,
             theme,
             &layout_label,
-            &chain.master_text_style_defaults,
+            &chain.master_text_styles.other,
             archive,
         );
         elements.extend(layout_elems);
@@ -1020,7 +1029,16 @@ impl<'a> SlideXmlParser<'a> {
             b"txBody" if self.in_shape => {
                 self.in_txbody = true;
                 self.text_body_style_defaults = if self.shape.has_placeholder {
-                    PptxTextBodyStyleDefaults::default()
+                    // Placeholder text stacks the master txStyles bucket and
+                    // the matching master/layout placeholder list styles.
+                    self.placeholder_geometry
+                        .map(|map| {
+                            map.text_defaults(
+                                self.shape.ph_type.as_deref(),
+                                self.shape.ph_idx.as_deref(),
+                            )
+                        })
+                        .unwrap_or_default()
                 } else {
                     self.inherited_text_body_defaults.clone()
                 };

@@ -483,7 +483,8 @@ fn test_shapes_and_text_boxes_mixed() {
 mod theme_tests;
 use self::theme_tests::{
     build_test_pptx_with_layout_master, build_test_pptx_with_layout_master_multi_slide,
-    build_test_pptx_with_theme, make_theme_xml, standard_theme_colors,
+    build_test_pptx_with_theme, build_test_pptx_with_theme_layout_master, make_theme_xml,
+    standard_theme_colors,
 };
 
 #[path = "pptx_table_tests.rs"]
@@ -521,3 +522,6 @@ mod connector_tests;
 
 #[path = "pptx_placeholder_geometry_tests.rs"]
 mod placeholder_geometry_tests;
+
+#[path = "pptx_placeholder_style_tests.rs"]
+mod placeholder_style_tests;

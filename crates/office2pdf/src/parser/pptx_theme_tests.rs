@@ -168,7 +168,7 @@ pub(super) fn build_test_pptx_with_layout_master(
     zip.finish().unwrap().into_inner()
 }
 
-fn build_test_pptx_with_theme_layout_master(
+pub(super) fn build_test_pptx_with_theme_layout_master(
     slide_cx_emu: i64,
     slide_cy_emu: i64,
     slide_xml: &str,
