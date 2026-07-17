@@ -555,3 +555,50 @@ fn test_cell_combined_formatting() {
     assert!((left.width - 2.0).abs() < 0.01);
     assert_eq!(left.color, Color::new(0, 255, 0));
 }
+
+#[test]
+fn test_cell_without_underline_style_is_not_underlined() {
+    // A font entry with other properties (e.g. bold) but no <u> element must
+    // not inherit a spurious underline from the library's enum default.
+    let data = build_xlsx_formatted(|sheet| {
+        let cell = sheet.get_cell_mut("A1");
+        cell.set_value("Plain");
+        cell.get_style_mut().get_font_mut().set_bold(true);
+    });
+    let parser = XlsxParser;
+    let (doc, _warnings) = parser.parse(&data, &ConvertOptions::default()).unwrap();
+
+    let tp = get_sheet_page(&doc, 0);
+    let style = first_run_style(&tp.table.rows[0].cells[0]);
+    assert_eq!(style.underline, None);
+}
+
+#[test]
+fn test_cell_explicit_underline_is_applied() {
+    let data = build_xlsx_formatted(|sheet| {
+        let cell = sheet.get_cell_mut("A1");
+        cell.set_value("Underlined");
+        cell.get_style_mut().get_font_mut().set_underline("single");
+    });
+    let parser = XlsxParser;
+    let (doc, _warnings) = parser.parse(&data, &ConvertOptions::default()).unwrap();
+
+    let tp = get_sheet_page(&doc, 0);
+    let style = first_run_style(&tp.table.rows[0].cells[0]);
+    assert_eq!(style.underline, Some(true));
+}
+
+#[test]
+fn test_cell_underline_none_is_not_underlined() {
+    let data = build_xlsx_formatted(|sheet| {
+        let cell = sheet.get_cell_mut("A1");
+        cell.set_value("NoUnderline");
+        cell.get_style_mut().get_font_mut().set_underline("none");
+    });
+    let parser = XlsxParser;
+    let (doc, _warnings) = parser.parse(&data, &ConvertOptions::default()).unwrap();
+
+    let tp = get_sheet_page(&doc, 0);
+    let style = first_run_style(&tp.table.rows[0].cells[0]);
+    assert_eq!(style.underline, None);
+}
