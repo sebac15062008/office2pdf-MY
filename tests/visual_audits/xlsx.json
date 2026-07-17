@@ -1,0 +1,55 @@
+{
+  "format": "xlsx",
+  "cases": [
+    {
+      "id": "page-scale",
+      "fixture": "xlsx/libreoffice/page_scale.xlsx",
+      "focus": "page setup"
+    },
+    {
+      "id": "header-footer",
+      "fixture": "xlsx/poi/headerFooterTest.xlsx",
+      "focus": "headers and footers"
+    },
+    {
+      "id": "repeating-rows-columns",
+      "fixture": "xlsx/poi/RepeatingRowsCols.xlsx",
+      "focus": "repeating titles"
+    },
+    {
+      "id": "widths-heights",
+      "fixture": "xlsx/poi/WidthsAndHeights.xlsx",
+      "focus": "row and column sizing"
+    },
+    {
+      "id": "right-to-left",
+      "fixture": "xlsx/poi/right-to-left.xlsx",
+      "focus": "right-to-left"
+    },
+    {
+      "id": "number-formats",
+      "fixture": "xlsx/poi/NumberFormatTests.xlsx",
+      "focus": "number formats"
+    },
+    {
+      "id": "conditional-formatting",
+      "fixture": "xlsx/poi/test_conditional_formatting.xlsx",
+      "focus": "conditional formatting"
+    },
+    {
+      "id": "drawings",
+      "fixture": "xlsx/poi/WithDrawing.xlsx",
+      "focus": "drawings"
+    },
+    {
+      "id": "charts",
+      "fixture": "xlsx/poi/WithChart.xlsx",
+      "focus": "charts"
+    },
+    {
+      "id": "text-boxes",
+      "fixture": "xlsx/poi/WithTextBox.xlsx",
+      "focus": "text boxes"
+    }
+  ]
+}
