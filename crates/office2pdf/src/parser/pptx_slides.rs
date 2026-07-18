@@ -481,6 +481,8 @@ struct PictureState {
     /// one inherit geometry from the layout/master chain.
     has_explicit_xfrm: bool,
     blip_embed: Option<String>,
+    /// Fill alpha from `<a:blip><a:alphaModFix amt>` (0.0-1.0).
+    blip_alpha: Option<f64>,
     svg_blip_embed: Option<String>,
     img_layer_embeds: Vec<String>,
     crop: Option<ImageCrop>,
@@ -772,23 +774,47 @@ fn finalize_picture(
         style: pic.ln_dash_style,
     });
     let element = selected_asset.and_then(|asset| {
-        asset.format().map(|format| FixedElement {
-            x: emu_to_pt(pic.x),
-            y: emu_to_pt(pic.y),
-            width: emu_to_pt(pic.cx),
-            height: emu_to_pt(pic.cy),
-            kind: FixedElementKind::Image(ImageData {
-                data: asset.data.clone(),
-                format,
-                width: Some(emu_to_pt(pic.cx)),
-                height: Some(emu_to_pt(pic.cy)),
-                crop: pic.crop,
-                stroke: stroke.clone(),
-                alignment: None,
-            }),
+        asset.format().map(|format| {
+            // Typst has no per-image opacity and background-overlay tricks
+            // break on non-white fills, so bake <a:alphaModFix> into the
+            // pixels instead.
+            let (data, format) = match pic.blip_alpha {
+                Some(alpha) if alpha < 1.0 => apply_image_alpha(&asset.data, alpha)
+                    .unwrap_or_else(|| (asset.data.clone(), format)),
+                _ => (asset.data.clone(), format),
+            };
+            FixedElement {
+                x: emu_to_pt(pic.x),
+                y: emu_to_pt(pic.y),
+                width: emu_to_pt(pic.cx),
+                height: emu_to_pt(pic.cy),
+                kind: FixedElementKind::Image(ImageData {
+                    data,
+                    format,
+                    width: Some(emu_to_pt(pic.cx)),
+                    height: Some(emu_to_pt(pic.cy)),
+                    crop: pic.crop,
+                    stroke: stroke.clone(),
+                    alignment: None,
+                }),
+            }
         })
     });
     (element, picture_warnings)
+}
+
+/// Multiply the image's alpha channel by `alpha` and re-encode as PNG.
+fn apply_image_alpha(data: &[u8], alpha: f64) -> Option<(Vec<u8>, ImageFormat)> {
+    let decoded = image::load_from_memory(data).ok()?;
+    let mut rgba = decoded.into_rgba8();
+    for pixel in rgba.pixels_mut() {
+        pixel[3] = (f64::from(pixel[3]) * alpha).round().clamp(0.0, 255.0) as u8;
+    }
+    let mut out = std::io::Cursor::new(Vec::new());
+    image::DynamicImage::ImageRgba8(rgba)
+        .write_to(&mut out, image::ImageFormat::Png)
+        .ok()?;
+    Some((out.into_inner(), ImageFormat::Png))
 }
 
 /// Apply a parsed solid fill color to the appropriate target based on the current context.
@@ -1310,6 +1336,11 @@ impl<'a> SlideXmlParser<'a> {
             b"blip" if self.in_pic => {
                 self.pic.blip_embed = get_attr_str(e, b"r:embed");
             }
+            b"alphaModFix" if self.in_pic => {
+                if let Some(amount) = get_attr_i64(e, b"amt") {
+                    self.pic.blip_alpha = Some((amount as f64 / 100_000.0).clamp(0.0, 1.0));
+                }
+            }
             b"svgBlip" if self.in_pic => {
                 self.pic.svg_blip_embed = get_attr_str(e, b"r:embed");
             }
@@ -1355,6 +1386,11 @@ impl<'a> SlideXmlParser<'a> {
             }
             b"blip" if self.in_pic => {
                 self.pic.blip_embed = get_attr_str(e, b"r:embed");
+            }
+            b"alphaModFix" if self.in_pic => {
+                if let Some(amount) = get_attr_i64(e, b"amt") {
+                    self.pic.blip_alpha = Some((amount as f64 / 100_000.0).clamp(0.0, 1.0));
+                }
             }
             b"svgBlip" if self.in_pic => {
                 self.pic.svg_blip_embed = get_attr_str(e, b"r:embed");

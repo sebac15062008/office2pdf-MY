@@ -895,3 +895,63 @@ fn test_picture_border_dashed() {
     assert_eq!(stroke.color.b, 0xFF);
     assert_eq!(stroke.style, BorderLineStyle::Dashed);
 }
+
+#[test]
+fn test_picture_alpha_mod_fix_bakes_transparency() {
+    // <a:alphaModFix amt="40000"/> = 40% opacity; Typst has no image
+    // opacity, so the alpha channel must carry it.
+    let bmp_data = make_test_bmp();
+    let pic_xml = r#"<p:pic><p:nvPicPr><p:cNvPr id="5" name="P"/><p:cNvPicPr/><p:nvPr/></p:nvPicPr><p:blipFill><a:blip r:embed="rId7"><a:alphaModFix amt="40000"/></a:blip><a:stretch><a:fillRect/></a:stretch></p:blipFill><p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="914400"/></a:xfrm></p:spPr></p:pic>"#;
+    let slide_xml = make_slide_xml(&[pic_xml.to_string()]);
+    let data = build_test_pptx_with_images(
+        SLIDE_CX,
+        SLIDE_CY,
+        &[(
+            slide_xml,
+            vec![TestSlideImage {
+                rid: "rId7".to_string(),
+                path: "image1.bmp".to_string(),
+                data: bmp_data,
+                relationship_type: None,
+            }],
+        )],
+    );
+
+    let parser = PptxParser;
+    let (doc, _warnings) = parser.parse(&data, &ConvertOptions::default()).unwrap();
+    let page = first_fixed_page(&doc);
+    let image = get_image(&page.elements[0]);
+    assert_eq!(image.format, ImageFormat::Png);
+    let decoded = image::load_from_memory(&image.data).unwrap().into_rgba8();
+    let alpha = decoded.get_pixel(0, 0)[3];
+    assert!(
+        (alpha as i32 - 102).abs() <= 2,
+        "alpha {alpha} should be ~102"
+    );
+}
+
+#[test]
+fn test_picture_without_alpha_keeps_original_bytes() {
+    let bmp_data = make_test_bmp();
+    let pic_xml = make_pic_xml(0, 0, 914_400, 914_400, "rId7");
+    let slide_xml = make_slide_xml(&[pic_xml]);
+    let data = build_test_pptx_with_images(
+        SLIDE_CX,
+        SLIDE_CY,
+        &[(
+            slide_xml,
+            vec![TestSlideImage {
+                rid: "rId7".to_string(),
+                path: "image1.bmp".to_string(),
+                data: bmp_data.clone(),
+                relationship_type: None,
+            }],
+        )],
+    );
+
+    let parser = PptxParser;
+    let (doc, _warnings) = parser.parse(&data, &ConvertOptions::default()).unwrap();
+    let page = first_fixed_page(&doc);
+    let image = get_image(&page.elements[0]);
+    assert_eq!(image.data, bmp_data);
+}
