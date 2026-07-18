@@ -10,9 +10,10 @@ mod common;
 use std::path::PathBuf;
 
 use office2pdf::config::ConvertOptions;
-use office2pdf::ir::{Block, FixedElementKind, FixedPage, Page};
+use office2pdf::ir::{Block, Color, FixedElementKind, FixedPage, Page};
 use office2pdf::parser::Parser;
 use office2pdf::parser::pptx::PptxParser;
+use office2pdf::render::typst_gen::generate_typst;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -77,6 +78,72 @@ fn has_textbox_with_content(pages: &[FixedPage]) -> bool {
             }),
             _ => false,
         })
+}
+
+// ---------------------------------------------------------------------------
+// PR #188 contributor acceptance fixtures
+// ---------------------------------------------------------------------------
+
+const PR_188_PAGE_FILL_FIXTURE: &str = "pr_188_page_fill_reset.pptx";
+const PR_188_LAYOUT_GRADIENT_FIXTURE: &str = "pr_188_layout_gradient.pptx";
+const PR_188_MASTER_BG_REF_FIXTURE: &str = "pr_188_master_bg_ref.pptx";
+
+#[test]
+fn structure_pr_188_contributor_acceptance_supported_behavior() {
+    let reset_pages = fixed_pages(PR_188_PAGE_FILL_FIXTURE);
+    assert_eq!(reset_pages.len(), 2);
+    assert_eq!(
+        reset_pages[0].background_color,
+        Some(Color::new(0xC0, 0x00, 0x00))
+    );
+    assert_eq!(reset_pages[1].background_color, None);
+    assert!(reset_pages[1].background_gradient.is_none());
+
+    let gradient_pages = fixed_pages(PR_188_LAYOUT_GRADIENT_FIXTURE);
+    let gradient = gradient_pages[0]
+        .background_gradient
+        .as_ref()
+        .expect("slide should inherit the layout gradient");
+    assert_eq!(gradient.stops.len(), 2);
+    assert_eq!(gradient.stops[0].color, Color::new(0x11, 0x22, 0x33));
+    assert_eq!(gradient.stops[1].color, Color::new(0x44, 0x55, 0x66));
+
+    let bg_ref_pages = fixed_pages(PR_188_MASTER_BG_REF_FIXTURE);
+    assert_eq!(
+        bg_ref_pages[0].background_color,
+        Some(Color::new(0x44, 0x72, 0xC4)),
+        "the master's bgRef should resolve the first theme background fill with accent1"
+    );
+}
+
+#[test]
+fn smoke_pr_188_contributor_acceptance_fixtures() {
+    for fixture in [
+        PR_188_PAGE_FILL_FIXTURE,
+        PR_188_LAYOUT_GRADIENT_FIXTURE,
+        PR_188_MASTER_BG_REF_FIXTURE,
+    ] {
+        assert_produces_valid_pdf(fixture);
+    }
+}
+
+#[test]
+#[ignore = "pending PR #188 adaptation: reset a slide without a background to white"]
+fn acceptance_pr_188_contributor_acceptance_page_fill_reset() {
+    let data = load_fixture(PR_188_PAGE_FILL_FIXTURE);
+    let (document, _warnings) = PptxParser
+        .parse(&data, &ConvertOptions::default())
+        .expect("fixture should parse");
+    let output = generate_typst(&document).expect("fixture should generate Typst");
+    let page_settings = output
+        .source
+        .lines()
+        .filter(|line| line.starts_with("#set page("))
+        .collect::<Vec<_>>();
+
+    assert_eq!(page_settings.len(), 2);
+    assert!(page_settings[0].contains("fill: rgb(192, 0, 0)"));
+    assert!(page_settings[1].contains("fill: white"));
 }
 
 // ---------------------------------------------------------------------------
