@@ -955,3 +955,97 @@ fn test_picture_without_alpha_keeps_original_bytes() {
     let image = get_image(&page.elements[0]);
     assert_eq!(image.data, bmp_data);
 }
+
+#[test]
+fn test_picture_crop_to_ellipse_sets_clip_shape() {
+    // An 8x8 opaque image so the corners fall outside the inscribed ellipse.
+    let mut png = std::io::Cursor::new(Vec::new());
+    image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(
+        8,
+        8,
+        image::Rgba([10, 20, 30, 255]),
+    ))
+    .write_to(&mut png, image::ImageFormat::Png)
+    .unwrap();
+    let bmp_data = png.into_inner();
+    let pic_xml = r#"<p:pic><p:nvPicPr><p:cNvPr id="5" name="P"/><p:cNvPicPr/><p:nvPr/></p:nvPicPr><p:blipFill><a:blip r:embed="rId7"/><a:stretch><a:fillRect/></a:stretch></p:blipFill><p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="914400"/></a:xfrm><a:prstGeom prst="ellipse"><a:avLst/></a:prstGeom></p:spPr></p:pic>"#;
+    let slide_xml = make_slide_xml(&[pic_xml.to_string()]);
+    let data = build_test_pptx_with_images(
+        SLIDE_CX,
+        SLIDE_CY,
+        &[(
+            slide_xml,
+            vec![TestSlideImage {
+                rid: "rId7".to_string(),
+                path: "image1.png".to_string(),
+                data: bmp_data,
+                relationship_type: None,
+            }],
+        )],
+    );
+
+    let parser = PptxParser;
+    let (doc, _warnings) = parser.parse(&data, &ConvertOptions::default()).unwrap();
+    let page = first_fixed_page(&doc);
+    let image = get_image(&page.elements[0]);
+    // Elliptical clips are baked into the alpha channel (PNG re-encode).
+    assert_eq!(image.clip_shape, None);
+    assert_eq!(image.format, ImageFormat::Png);
+    let decoded = image::load_from_memory(&image.data).unwrap().into_rgba8();
+    assert_eq!(
+        decoded.get_pixel(0, 0)[3],
+        0,
+        "corner outside ellipse must be transparent"
+    );
+}
+
+#[test]
+fn test_picture_crop_to_round_rect_uses_adjust() {
+    let bmp_data = make_test_bmp();
+    let pic_xml = r#"<p:pic><p:nvPicPr><p:cNvPr id="5" name="P"/><p:cNvPicPr/><p:nvPr/></p:nvPicPr><p:blipFill><a:blip r:embed="rId7"/><a:stretch><a:fillRect/></a:stretch></p:blipFill><p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="914400"/></a:xfrm><a:prstGeom prst="roundRect"><a:avLst><a:gd name="adj" fmla="val 25000"/></a:avLst></a:prstGeom></p:spPr></p:pic>"#;
+    let slide_xml = make_slide_xml(&[pic_xml.to_string()]);
+    let data = build_test_pptx_with_images(
+        SLIDE_CX,
+        SLIDE_CY,
+        &[(
+            slide_xml,
+            vec![TestSlideImage {
+                rid: "rId7".to_string(),
+                path: "image1.bmp".to_string(),
+                data: bmp_data,
+                relationship_type: None,
+            }],
+        )],
+    );
+
+    let parser = PptxParser;
+    let (doc, _warnings) = parser.parse(&data, &ConvertOptions::default()).unwrap();
+    let page = first_fixed_page(&doc);
+    let image = get_image(&page.elements[0]);
+    assert_eq!(image.clip_shape, Some(ImageClipShape::RoundedRect(0.25)));
+}
+
+#[test]
+fn test_plain_rect_picture_has_no_clip_shape() {
+    let bmp_data = make_test_bmp();
+    let pic_xml = make_pic_xml(0, 0, 914_400, 914_400, "rId7");
+    let slide_xml = make_slide_xml(&[pic_xml]);
+    let data = build_test_pptx_with_images(
+        SLIDE_CX,
+        SLIDE_CY,
+        &[(
+            slide_xml,
+            vec![TestSlideImage {
+                rid: "rId7".to_string(),
+                path: "image1.bmp".to_string(),
+                data: bmp_data,
+                relationship_type: None,
+            }],
+        )],
+    );
+
+    let parser = PptxParser;
+    let (doc, _warnings) = parser.parse(&data, &ConvertOptions::default()).unwrap();
+    let page = first_fixed_page(&doc);
+    assert_eq!(get_image(&page.elements[0]).clip_shape, None);
+}

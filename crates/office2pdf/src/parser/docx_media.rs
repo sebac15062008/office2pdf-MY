@@ -37,6 +37,7 @@ pub(super) fn extract_drawing_image(
         crop: None,
         stroke: None,
         alignment: None,
+        clip_shape: None,
     };
 
     if pic.position_type == docx_rs::DrawingPositionType::Anchor {
@@ -83,6 +84,7 @@ pub(super) fn extract_shape_image(shape: &docx_rs::Shape, images: &ImageMap) -> 
         crop: None,
         stroke: None,
         alignment: None,
+        clip_shape: None,
     }))
 }
 

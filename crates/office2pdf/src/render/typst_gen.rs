@@ -1305,6 +1305,30 @@ fn border_line_style_to_typst(style: BorderLineStyle) -> &'static str {
 }
 
 fn generate_image(out: &mut String, img: &ImageData, ctx: &mut GenCtx) {
+    // "Crop to shape": clip the image box to the picture's preset geometry.
+    if let Some(clip) = img.clip_shape
+        && let (Some(width), Some(height)) = (img.width, img.height)
+    {
+        let radius: String = match clip {
+            crate::ir::ImageClipShape::Ellipse => "50%".to_string(),
+            crate::ir::ImageClipShape::RoundedRect(fraction) => {
+                format!("{}pt", format_f64(width.min(height) * fraction))
+            }
+        };
+        let _ = write!(
+            out,
+            "#box(width: {}pt, height: {}pt, clip: true, radius: {radius})[",
+            format_f64(width),
+            format_f64(height)
+        );
+        let mut inner: ImageData = img.clone();
+        inner.clip_shape = None;
+        generate_image(out, &inner, ctx);
+        out.pop();
+        out.push_str("]\n");
+        return;
+    }
+
     let path = ctx.add_image(img);
 
     out.push_str("#image(\"");

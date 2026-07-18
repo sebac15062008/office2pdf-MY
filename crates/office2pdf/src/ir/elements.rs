@@ -428,6 +428,17 @@ pub struct ImageData {
     /// Horizontal placement inherited from the containing paragraph
     /// (flow documents); None renders at the flow default (left).
     pub alignment: Option<Alignment>,
+    /// Clip geometry from the picture's `<a:prstGeom>` (crop to shape).
+    pub clip_shape: Option<ImageClipShape>,
+}
+
+/// Supported picture clip geometries (PowerPoint "crop to shape").
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ImageClipShape {
+    /// Rounded rectangle with the corner radius as a fraction of the
+    /// shorter side (PowerPoint's roundRect `adj`, default 1/6 ≈ 0.1667).
+    RoundedRect(f64),
+    Ellipse,
 }
 
 /// Supported image formats.

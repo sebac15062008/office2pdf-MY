@@ -252,6 +252,7 @@ fn build_background_image_element<R: Read + std::io::Seek>(
             crop: None,
             stroke: None,
             alignment: None,
+            clip_shape: None,
         }),
     })
 }
@@ -483,6 +484,11 @@ struct PictureState {
     blip_embed: Option<String>,
     /// Fill alpha from `<a:blip><a:alphaModFix amt>` (0.0-1.0).
     blip_alpha: Option<f64>,
+    /// Preset geometry name from `<a:prstGeom prst>` ("crop to shape").
+    prst_geom: Option<String>,
+    /// First `<a:gd>` adjust value inside the picture's prstGeom avLst.
+    prst_adj: Option<f64>,
+    in_prst_geom: bool,
     svg_blip_embed: Option<String>,
     img_layer_embeds: Vec<String>,
     crop: Option<ImageCrop>,
@@ -778,10 +784,24 @@ fn finalize_picture(
             // Typst has no per-image opacity and background-overlay tricks
             // break on non-white fills, so bake <a:alphaModFix> into the
             // pixels instead.
+            let mut clip_shape = picture_clip_shape(pic.prst_geom.as_deref(), pic.prst_adj);
             let (data, format) = match pic.blip_alpha {
                 Some(alpha) if alpha < 1.0 => apply_image_alpha(&asset.data, alpha)
                     .unwrap_or_else(|| (asset.data.clone(), format)),
                 _ => (asset.data.clone(), format),
+            };
+            // Typst's corner radius cannot express a true ellipse on a
+            // non-square box, so bake elliptical clips into the alpha mask.
+            let (data, format) = if clip_shape == Some(ImageClipShape::Ellipse) {
+                match apply_ellipse_mask(&data) {
+                    Some(masked) => {
+                        clip_shape = None;
+                        masked
+                    }
+                    None => (data, format),
+                }
+            } else {
+                (data, format)
             };
             FixedElement {
                 x: emu_to_pt(pic.x),
@@ -796,11 +816,50 @@ fn finalize_picture(
                     crop: pic.crop,
                     stroke: stroke.clone(),
                     alignment: None,
+                    clip_shape,
                 }),
             }
         })
     });
     (element, picture_warnings)
+}
+
+/// Map a picture's preset geometry to a renderable clip shape
+/// (PowerPoint "crop to shape"); unsupported geometries clip nothing.
+fn picture_clip_shape(
+    prst: Option<&str>,
+    adjust: Option<f64>,
+) -> Option<crate::ir::ImageClipShape> {
+    match prst? {
+        "ellipse" => Some(crate::ir::ImageClipShape::Ellipse),
+        "roundRect" | "round1Rect" | "round2SameRect" => Some(
+            crate::ir::ImageClipShape::RoundedRect(adjust.unwrap_or(0.16667).clamp(0.0, 0.5)),
+        ),
+        _ => None,
+    }
+}
+
+/// Zero the alpha outside the inscribed ellipse and re-encode as PNG.
+fn apply_ellipse_mask(data: &[u8]) -> Option<(Vec<u8>, ImageFormat)> {
+    let decoded = image::load_from_memory(data).ok()?;
+    let mut rgba = decoded.into_rgba8();
+    let (width, height) = rgba.dimensions();
+    if width == 0 || height == 0 {
+        return None;
+    }
+    let (cx, cy) = (f64::from(width) / 2.0, f64::from(height) / 2.0);
+    for (x, y, pixel) in rgba.enumerate_pixels_mut() {
+        let nx = (f64::from(x) + 0.5 - cx) / cx;
+        let ny = (f64::from(y) + 0.5 - cy) / cy;
+        if nx * nx + ny * ny > 1.0 {
+            pixel[3] = 0;
+        }
+    }
+    let mut out = std::io::Cursor::new(Vec::new());
+    image::DynamicImage::ImageRgba8(rgba)
+        .write_to(&mut out, image::ImageFormat::Png)
+        .ok()?;
+    Some((out.into_inner(), ImageFormat::Png))
 }
 
 /// Multiply the image's alpha channel by `alpha` and re-encode as PNG.
@@ -1070,6 +1129,19 @@ impl<'a> SlideXmlParser<'a> {
                     get_attr_str(e, b"flipH").is_some_and(|v| v == "1" || v == "true");
                 self.shape.flip_v =
                     get_attr_str(e, b"flipV").is_some_and(|v| v == "1" || v == "true");
+            }
+            b"prstGeom" if self.in_pic && self.pic.in_sp_pr => {
+                self.pic.prst_geom = get_attr_str(e, b"prst");
+                self.pic.in_prst_geom = true;
+            }
+            b"gd" if self.in_pic && self.pic.in_prst_geom => {
+                if self.pic.prst_adj.is_none()
+                    && let Some(formula) = get_attr_str(e, b"fmla")
+                    && let Some(value) = formula.strip_prefix("val ")
+                    && let Ok(value) = value.trim().parse::<f64>()
+                {
+                    self.pic.prst_adj = Some(value / 100_000.0);
+                }
             }
             b"prstGeom" if self.shape.in_sp_pr => {
                 if let Some(prst) = get_attr_str(e, b"prst") {
@@ -1432,6 +1504,18 @@ impl<'a> SlideXmlParser<'a> {
             b"spAutoFit" | b"normAutofit" if self.in_shape && self.in_txbody => {
                 self.text_box_auto_fit = true;
             }
+            b"prstGeom" if self.in_pic && self.pic.in_sp_pr => {
+                self.pic.prst_geom = get_attr_str(e, b"prst");
+            }
+            b"gd" if self.in_pic && self.pic.in_prst_geom => {
+                if self.pic.prst_adj.is_none()
+                    && let Some(formula) = get_attr_str(e, b"fmla")
+                    && let Some(value) = formula.strip_prefix("val ")
+                    && let Ok(value) = value.trim().parse::<f64>()
+                {
+                    self.pic.prst_adj = Some(value / 100_000.0);
+                }
+            }
             b"prstGeom" if self.shape.in_sp_pr => {
                 if let Some(prst) = get_attr_str(e, b"prst") {
                     self.shape.prst_geom = Some(prst);
@@ -1726,6 +1810,9 @@ impl<'a> SlideXmlParser<'a> {
             }
             b"spPr" if self.in_pic && self.pic.in_sp_pr => {
                 self.pic.in_sp_pr = false;
+            }
+            b"prstGeom" if self.in_pic && self.pic.in_prst_geom => {
+                self.pic.in_prst_geom = false;
             }
             b"ln" if self.in_pic && self.pic.in_ln => {
                 self.pic.in_ln = false;

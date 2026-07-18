@@ -208,6 +208,7 @@ fn test_render_document_with_image() {
                 crop: None,
                 stroke: None,
                 alignment: None,
+                clip_shape: None,
             })],
             header: None,
             footer: None,
@@ -246,6 +247,7 @@ fn test_render_document_image_mixed_with_text() {
                     crop: None,
                     stroke: None,
                     alignment: None,
+                    clip_shape: None,
                 }),
                 Block::Paragraph(Paragraph {
                     style: ParagraphStyle::default(),
