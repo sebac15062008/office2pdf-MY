@@ -90,6 +90,15 @@ fn extract_cond_fmt_style(rule: &umya_spreadsheet::ConditionalFormattingRule) ->
         if let Some(bg) = style.get_background_color() {
             result.background = parse_argb_color(bg.get_argb());
         }
+        // Differential formats (dxf) store solid CF fills in the pattern's
+        // bgColor with no fgColor, which get_background_color misses.
+        if result.background.is_none()
+            && let Some(bg) = style
+                .get_fill()
+                .and_then(|fill| fill.get_pattern_fill()?.get_background_color())
+        {
+            result.background = parse_argb_color(bg.get_argb());
+        }
         if let Some(font) = style.get_font() {
             if *font.get_bold() {
                 result.bold = Some(true);
@@ -155,6 +164,52 @@ fn compute_min_max(values: &[f64]) -> Option<(f64, f64, f64)> {
 }
 
 /// Apply a CellIs conditional formatting rule to matching cells in the given ranges.
+/// Apply text-match conditional rules (containsText / notContainsText /
+/// beginsWith / endsWith) using the rule's `text` attribute.
+fn apply_text_rule(
+    sheet: &umya_spreadsheet::Worksheet,
+    rule: &umya_spreadsheet::ConditionalFormattingRule,
+    ranges: &[CellRange],
+    overrides: &mut HashMap<CellPos, CondFmtOverride>,
+) {
+    use umya_spreadsheet::ConditionalFormatValues;
+    let needle: &str = rule.get_text();
+    if needle.is_empty() {
+        return;
+    }
+    let fmt = extract_cond_fmt_style(rule);
+
+    for range in ranges {
+        for row in range.start_row..=range.end_row {
+            for col in range.start_col..=range.end_col {
+                let Some(cell) = sheet.get_cell((col, row)) else {
+                    continue;
+                };
+                let value = cell.get_formatted_value();
+                let matched = match rule.get_type() {
+                    ConditionalFormatValues::ContainsText => value.contains(needle),
+                    ConditionalFormatValues::NotContainsText => !value.contains(needle),
+                    ConditionalFormatValues::BeginsWith => value.starts_with(needle),
+                    ConditionalFormatValues::EndsWith => value.ends_with(needle),
+                    _ => false,
+                };
+                if matched {
+                    let entry = overrides.entry((col, row)).or_default();
+                    if fmt.background.is_some() {
+                        entry.background = fmt.background;
+                    }
+                    if fmt.font_color.is_some() {
+                        entry.font_color = fmt.font_color;
+                    }
+                    if fmt.bold.is_some() {
+                        entry.bold = fmt.bold;
+                    }
+                }
+            }
+        }
+    }
+}
+
 fn apply_cell_is_rule(
     sheet: &umya_spreadsheet::Worksheet,
     rule: &umya_spreadsheet::ConditionalFormattingRule,
@@ -367,6 +422,12 @@ pub(crate) fn build_cond_fmt_overrides(
             match rule.get_type() {
                 ConditionalFormatValues::CellIs => {
                     apply_cell_is_rule(sheet, rule, &ranges, &mut overrides);
+                }
+                ConditionalFormatValues::ContainsText
+                | ConditionalFormatValues::NotContainsText
+                | ConditionalFormatValues::BeginsWith
+                | ConditionalFormatValues::EndsWith => {
+                    apply_text_rule(sheet, rule, &ranges, &mut overrides);
                 }
                 ConditionalFormatValues::ColorScale => {
                     apply_color_scale_rule(sheet, rule, &ranges, &mut overrides);

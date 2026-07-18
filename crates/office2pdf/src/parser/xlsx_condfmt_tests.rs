@@ -419,3 +419,38 @@ fn test_cond_fmt_icon_set() {
         .expect("A3 should have icon_text");
     assert_eq!(icon3, "↑", "High value should get up arrow");
 }
+
+#[test]
+fn test_cond_fmt_contains_text_background() {
+    let data = build_xlsx_with_cond_fmt(|sheet| {
+        sheet.get_cell_mut("B1").set_value("Whole Grain Bread");
+        sheet.get_cell_mut("B2").set_value("Rice");
+
+        let mut rule = umya_spreadsheet::ConditionalFormattingRule::default();
+        rule.set_type(umya_spreadsheet::ConditionalFormatValues::ContainsText);
+        rule.set_text("Grain");
+        rule.set_priority(1);
+        let mut style = umya_spreadsheet::Style::default();
+        style.set_background_color("FFFFE699");
+        rule.set_style(style);
+
+        let mut cf = umya_spreadsheet::ConditionalFormatting::default();
+        let mut sqref = umya_spreadsheet::SequenceOfReferences::default();
+        sqref.set_sqref("B1:B2");
+        cf.set_sequence_of_references(sqref);
+        cf.set_conditional_collection(vec![rule]);
+        sheet.add_conditional_formatting_collection(cf);
+    });
+
+    let parser = XlsxParser;
+    let (doc, _warnings) = parser.parse(&data, &ConvertOptions::default()).unwrap();
+    let tp = get_sheet_page(&doc, 0);
+    assert!(
+        tp.table.rows[0].cells[1].background.is_some(),
+        "matching cell must gain the rule fill"
+    );
+    assert!(
+        tp.table.rows[1].cells[1].background.is_none(),
+        "non-matching cell must stay unfilled"
+    );
+}
