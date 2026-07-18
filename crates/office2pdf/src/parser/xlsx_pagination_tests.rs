@@ -79,7 +79,7 @@ fn test_narrow_sheet_stays_single_page() {
             height: None,
         }],
     );
-    let pages = split_sheet_page_by_width(page);
+    let pages = split_sheet_page_by_width(page, None);
     assert_eq!(pages.len(), 1);
 }
 
@@ -93,7 +93,7 @@ fn test_wide_sheet_splits_into_column_groups() {
             height: None,
         }],
     );
-    let pages = split_sheet_page_by_width(page);
+    let pages = split_sheet_page_by_width(page, None);
     assert_eq!(pages.len(), 3);
     assert_eq!(pages[0].table.column_widths.len(), 2);
     assert_eq!(pages[1].table.column_widths.len(), 2);
@@ -119,7 +119,7 @@ fn test_merge_straddling_boundary_truncates_and_blanks_continuation() {
             height: None,
         }],
     );
-    let pages = split_sheet_page_by_width(page);
+    let pages = split_sheet_page_by_width(page, None);
     assert_eq!(pages.len(), 2);
 
     let first_row = &pages[0].table.rows[0];
@@ -151,7 +151,7 @@ fn test_charts_stay_on_first_column_group() {
             series: vec![],
         },
     )];
-    let pages = split_sheet_page_by_width(page);
+    let pages = split_sheet_page_by_width(page, None);
     assert_eq!(pages.len(), 2);
     assert_eq!(pages[0].charts.len(), 1);
     assert!(pages[1].charts.is_empty());
@@ -169,7 +169,7 @@ fn test_pathologically_wide_sheet_is_capped() {
             height: None,
         }],
     );
-    let pages = split_sheet_page_by_width(page);
+    let pages = split_sheet_page_by_width(page, None);
     assert_eq!(pages.len(), 12);
     let total_columns: usize = pages.iter().map(|p| p.table.column_widths.len()).sum();
     assert_eq!(total_columns, 100);

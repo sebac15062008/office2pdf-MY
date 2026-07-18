@@ -101,6 +101,66 @@ pub(super) fn find_print_area(sheet: &umya_spreadsheet::Worksheet) -> Option<Cel
     None
 }
 
+/// Print-title ranges from `_xlnm.Print_Titles`: rows and/or columns that
+/// Excel repeats on every printed page (1-indexed, inclusive).
+#[derive(Debug, Clone, Copy, Default)]
+pub(super) struct PrintTitles {
+    pub(super) rows: Option<(u32, u32)>,
+    pub(super) cols: Option<(u32, u32)>,
+}
+
+/// Look up the sheet's print titles. The defined name holds one or two
+/// comma-separated parts like `Sheet4!$A:$B,Sheet4!$2:$3`. Sheet-scoped
+/// names (localSheetId) land on the worksheet; names the reader could not
+/// scope stay at the workbook level, so both are consulted.
+pub(super) fn find_print_titles(
+    book: &umya_spreadsheet::Spreadsheet,
+    sheet: &umya_spreadsheet::Worksheet,
+) -> PrintTitles {
+    let mut titles = PrintTitles::default();
+    for dn in sheet.get_defined_names() {
+        if dn.get_name() == "_xlnm.Print_Titles" {
+            parse_print_title_address(&dn.get_address(), &mut titles);
+        }
+    }
+    if titles.rows.is_none() && titles.cols.is_none() {
+        let plain_prefix: String = format!("{}!", sheet.get_name());
+        let quoted_prefix: String = format!("'{}'!", sheet.get_name());
+        for dn in book.get_defined_names() {
+            let address: String = dn.get_address();
+            if dn.get_name() == "_xlnm.Print_Titles"
+                && (address.contains(&plain_prefix) || address.contains(&quoted_prefix))
+            {
+                parse_print_title_address(&address, &mut titles);
+            }
+        }
+    }
+    titles
+}
+
+fn parse_print_title_address(address: &str, titles: &mut PrintTitles) {
+    for part in address.split(',') {
+        let range_part: String = part
+            .rsplit('!')
+            .next()
+            .unwrap_or(part)
+            .replace('$', "")
+            .trim()
+            .to_string();
+        let Some((start_str, end_str)) = range_part.split_once(':') else {
+            continue;
+        };
+        if let (Ok(row_start), Ok(row_end)) = (start_str.parse::<u32>(), end_str.parse::<u32>()) {
+            titles.rows = Some((row_start.min(row_end), row_start.max(row_end)));
+        } else if let (Some(col_start), Some(col_end)) = (
+            parse_column_letters(start_str),
+            parse_column_letters(end_str),
+        ) {
+            titles.cols = Some((col_start.min(col_end), col_start.max(col_end)));
+        }
+    }
+}
+
 /// Collect sorted manual row page break positions from a sheet.
 pub(super) fn collect_row_breaks(sheet: &umya_spreadsheet::Worksheet) -> Vec<u32> {
     let mut breaks: Vec<u32> = sheet

@@ -47,6 +47,18 @@ fn sheet_print_margins(sheet: &umya_spreadsheet::Worksheet) -> Margins {
     }
 }
 
+/// Convert absolute print-title columns to 0-based indices within the
+/// rendered column range, half-open. None when the titles fall outside it.
+fn title_column_indices(print_titles: PrintTitles, ctx: &SheetContext) -> Option<(usize, usize)> {
+    let (col_start, col_end) = print_titles.cols?;
+    if col_end < ctx.col_start || col_start > ctx.col_end {
+        return None;
+    }
+    let start_idx = col_start.max(ctx.col_start) - ctx.col_start;
+    let end_idx = col_end.min(ctx.col_end) - ctx.col_start + 1;
+    Some((start_idx as usize, end_idx as usize))
+}
+
 pub struct XlsxParser;
 
 impl XlsxParser {
@@ -103,38 +115,59 @@ impl XlsxParser {
             }
             sheet_charts.sort_by_key(|(row, _)| *row);
 
+            let print_titles = find_print_titles(&book, sheet);
+            let title_columns: Option<(usize, usize)> = title_column_indices(print_titles, &ctx);
+
             // Process rows in chunks
             let mut chunk_start = row_start;
             let mut first_chunk = true;
             while chunk_start <= row_end {
                 let chunk_end = (chunk_start + chunk_size as u32 - 1).min(row_end);
 
-                let rows = build_rows_for_range(sheet, &ctx, chunk_start, chunk_end);
+                let mut rows = build_rows_for_range(sheet, &ctx, chunk_start, chunk_end);
+                let mut header_row_count: usize = 0;
+                if let Some((title_start, title_end)) = print_titles.rows
+                    && title_end < chunk_start
+                {
+                    // Later chunks don't contain the title rows — prepend them.
+                    let mut title_rows = build_rows_for_range(sheet, &ctx, title_start, title_end);
+                    header_row_count = title_rows.len();
+                    title_rows.append(&mut rows);
+                    rows = title_rows;
+                } else if let Some((_, title_end)) = print_titles.rows
+                    && title_end >= chunk_start
+                    && title_end <= chunk_end
+                {
+                    header_row_count = (title_end - chunk_start + 1) as usize;
+                }
 
                 let doc = Document {
                     metadata: metadata.clone(),
-                    pages: xlsx_pagination::split_sheet_page_by_width(SheetPage {
-                        name: sheet_name.clone(),
-                        size: PageSize::default(),
-                        margins: sheet_print_margins(sheet),
-                        table: Table {
-                            rows,
-                            column_widths: ctx.column_widths.clone(),
-                            header_row_count: 0,
-                            alignment: None,
-                            default_cell_padding: None,
-                            use_content_driven_row_heights: false,
-                            default_vertical_align: Some(crate::ir::CellVerticalAlign::Bottom),
+                    pages: xlsx_pagination::split_sheet_page_by_width(
+                        SheetPage {
+                            name: sheet_name.clone(),
+                            size: PageSize::default(),
+                            margins: sheet_print_margins(sheet),
+                            table: Table {
+                                rows,
+                                column_widths: ctx.column_widths.clone(),
+                                header_row_count,
+                                alignment: None,
+                                default_cell_padding: None,
+                                use_content_driven_row_heights: false,
+                                default_vertical_align: Some(crate::ir::CellVerticalAlign::Bottom),
+                            },
+                            header: sheet_header.clone(),
+                            footer: sheet_footer.clone(),
+                            charts: if first_chunk {
+                                first_chunk = false;
+                                std::mem::take(&mut sheet_charts)
+                            } else {
+                                vec![]
+                            },
                         },
-                        header: sheet_header.clone(),
-                        footer: sheet_footer.clone(),
-                        charts: if first_chunk {
-                            first_chunk = false;
-                            std::mem::take(&mut sheet_charts)
-                        } else {
-                            vec![]
-                        },
-                    })
+                        title_columns,
+                    )
                     .into_iter()
                     .map(Page::Sheet)
                     .collect(),
@@ -185,6 +218,19 @@ impl Parser for XlsxParser {
 
             let rows = build_rows_for_range(sheet, &ctx, row_start, row_end);
 
+            let print_titles = find_print_titles(&book, sheet);
+            let title_columns: Option<(usize, usize)> = title_column_indices(print_titles, &ctx);
+            // Rows from the sheet top through the end of the title range
+            // repeat as the table header on every page. Excel repeats only
+            // the title rows themselves; when they don't start at the top
+            // this over-repeats the few rows above them, which reads better
+            // than not repeating at all.
+            let header_row_count: usize = print_titles
+                .rows
+                .filter(|(_, title_end)| *title_end >= row_start)
+                .map(|(_, title_end)| (title_end.min(row_end) - row_start + 1) as usize)
+                .unwrap_or(0);
+
             // Collect row page breaks and split rows into page segments
             let row_breaks = collect_row_breaks(sheet);
             let sheet_name = sheet.get_name().to_string();
@@ -210,23 +256,26 @@ impl Parser for XlsxParser {
             if row_breaks.is_empty() {
                 // No page breaks — single page
                 pages.extend(
-                    xlsx_pagination::split_sheet_page_by_width(SheetPage {
-                        name: sheet_name,
-                        size: PageSize::default(),
-                        margins: sheet_print_margins(sheet),
-                        table: Table {
-                            rows,
-                            column_widths: ctx.column_widths,
-                            header_row_count: 0,
-                            alignment: None,
-                            default_cell_padding: None,
-                            use_content_driven_row_heights: false,
-                            default_vertical_align: Some(crate::ir::CellVerticalAlign::Bottom),
+                    xlsx_pagination::split_sheet_page_by_width(
+                        SheetPage {
+                            name: sheet_name,
+                            size: PageSize::default(),
+                            margins: sheet_print_margins(sheet),
+                            table: Table {
+                                rows,
+                                column_widths: ctx.column_widths,
+                                header_row_count,
+                                alignment: None,
+                                default_cell_padding: None,
+                                use_content_driven_row_heights: false,
+                                default_vertical_align: Some(crate::ir::CellVerticalAlign::Bottom),
+                            },
+                            header: sheet_header.clone(),
+                            footer: sheet_footer.clone(),
+                            charts: sheet_charts,
                         },
-                        header: sheet_header.clone(),
-                        footer: sheet_footer.clone(),
-                        charts: sheet_charts,
-                    })
+                        title_columns,
+                    )
                     .into_iter()
                     .map(Page::Sheet),
                 );
@@ -254,30 +303,52 @@ impl Parser for XlsxParser {
 
                 // For page-break segments, attach all charts to the first segment
                 let mut first_segment = true;
-                for segment in segments {
+                for mut segment in segments {
+                    let mut segment_header_rows: usize = 0;
+                    if first_segment {
+                        segment_header_rows = header_row_count.min(segment.len());
+                    } else if let Some((title_start, title_end)) = print_titles.rows
+                        && title_end >= row_start
+                    {
+                        // Later segments don't contain the title rows — prepend.
+                        let mut title_rows = build_rows_for_range(
+                            sheet,
+                            &ctx,
+                            title_start.max(row_start),
+                            title_end,
+                        );
+                        segment_header_rows = title_rows.len();
+                        title_rows.append(&mut segment);
+                        segment = title_rows;
+                    }
                     pages.extend(
-                        xlsx_pagination::split_sheet_page_by_width(SheetPage {
-                            name: sheet_name.clone(),
-                            size: PageSize::default(),
-                            margins: sheet_print_margins(sheet),
-                            table: Table {
-                                rows: segment,
-                                column_widths: ctx.column_widths.clone(),
-                                header_row_count: 0,
-                                alignment: None,
-                                default_cell_padding: None,
-                                use_content_driven_row_heights: false,
-                                default_vertical_align: Some(crate::ir::CellVerticalAlign::Bottom),
+                        xlsx_pagination::split_sheet_page_by_width(
+                            SheetPage {
+                                name: sheet_name.clone(),
+                                size: PageSize::default(),
+                                margins: sheet_print_margins(sheet),
+                                table: Table {
+                                    rows: segment,
+                                    column_widths: ctx.column_widths.clone(),
+                                    header_row_count: segment_header_rows,
+                                    alignment: None,
+                                    default_cell_padding: None,
+                                    use_content_driven_row_heights: false,
+                                    default_vertical_align: Some(
+                                        crate::ir::CellVerticalAlign::Bottom,
+                                    ),
+                                },
+                                header: sheet_header.clone(),
+                                footer: sheet_footer.clone(),
+                                charts: if first_segment {
+                                    first_segment = false;
+                                    std::mem::take(&mut sheet_charts)
+                                } else {
+                                    vec![]
+                                },
                             },
-                            header: sheet_header.clone(),
-                            footer: sheet_footer.clone(),
-                            charts: if first_segment {
-                                first_segment = false;
-                                std::mem::take(&mut sheet_charts)
-                            } else {
-                                vec![]
-                            },
-                        })
+                            title_columns,
+                        )
                         .into_iter()
                         .map(Page::Sheet),
                     );
