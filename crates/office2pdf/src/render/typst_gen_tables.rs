@@ -32,9 +32,10 @@ fn generate_table_inner(
 ) -> Result<(), ConvertError> {
     out.push_str("#table(\n");
 
-    if table_has_explicit_cell_borders(table) {
-        out.push_str("  stroke: none,\n");
-    }
+    // Only explicitly set borders render: Excel does not print gridlines,
+    // and Word/PowerPoint borderless tables have none either. Typst's
+    // default 1pt grid painted spurious borders on every unbordered table.
+    out.push_str("  stroke: none,\n");
 
     if let Some(padding) = table.default_cell_padding {
         let _ = writeln!(out, "  inset: {},", format_insets(&padding));
@@ -102,21 +103,6 @@ fn generate_table_inner(
 
     out.push_str(")\n");
     Ok(())
-}
-
-fn table_has_explicit_cell_borders(table: &Table) -> bool {
-    table.rows.iter().any(|row| {
-        row.cells
-            .iter()
-            .any(|cell| cell.border.as_ref().is_some_and(cell_border_has_side))
-    })
-}
-
-fn cell_border_has_side(border: &CellBorder) -> bool {
-    border.top.is_some()
-        || border.bottom.is_some()
-        || border.left.is_some()
-        || border.right.is_some()
 }
 
 fn generate_table_rows(
