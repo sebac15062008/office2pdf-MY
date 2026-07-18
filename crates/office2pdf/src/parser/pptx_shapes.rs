@@ -30,6 +30,8 @@ struct GroupTransform {
     /// Child coordinate space extent, in EMU.
     ch_ext_cx: i64,
     ch_ext_cy: i64,
+    /// Group rotation in degrees (clockwise), from the group xfrm `rot`.
+    rot_deg: f64,
 }
 
 impl GroupTransform {
@@ -69,6 +71,27 @@ impl GroupTransform {
                 stroke.width *= (scale_x + scale_y) / 2.0;
             }
         }
+
+        // Compose the group's own rotation: orbit the child's center around
+        // the group center and add the angle to the child's own rotation
+        // (shape geometry only — images and text boxes carry no rotation).
+        if self.rot_deg != 0.0 {
+            let group_center_x = off_x_pt + emu_to_pt(self.ext_cx) / 2.0;
+            let group_center_y = off_y_pt + emu_to_pt(self.ext_cy) / 2.0;
+            let element_center_x = elem.x + elem.width / 2.0;
+            let element_center_y = elem.y + elem.height / 2.0;
+            let radians = self.rot_deg.to_radians();
+            let (sin, cos) = radians.sin_cos();
+            let dx = element_center_x - group_center_x;
+            let dy = element_center_y - group_center_y;
+            let rotated_x = group_center_x + dx * cos - dy * sin;
+            let rotated_y = group_center_y + dx * sin + dy * cos;
+            elem.x = rotated_x - elem.width / 2.0;
+            elem.y = rotated_y - elem.height / 2.0;
+            if let FixedElementKind::Shape(ref mut shape) = elem.kind {
+                shape.rotation_deg = Some(shape.rotation_deg.unwrap_or(0.0) + self.rot_deg);
+            }
+        }
     }
 }
 
@@ -100,7 +123,12 @@ pub(super) fn parse_group_shape(
             Ok(Event::Start(ref e)) => match e.local_name().as_ref() {
                 b"nvGrpSpPr" if header_depth == 0 => header_depth = 1,
                 b"grpSpPr" if header_depth == 0 => header_depth = 1,
-                b"xfrm" if header_depth == 1 => in_xfrm = true,
+                b"xfrm" if header_depth == 1 => {
+                    in_xfrm = true;
+                    if let Some(rot) = get_attr_i64(e, b"rot") {
+                        transform.rot_deg = rot as f64 / 60_000.0;
+                    }
+                }
                 _ if header_depth > 0 => header_depth += 1,
                 _ => break,
             },

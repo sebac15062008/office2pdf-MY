@@ -248,3 +248,34 @@ fn test_group_shape_scales_image_dimensions() {
         "ImageData.height should be {expected_h}, got {img_h}"
     );
 }
+
+#[test]
+fn test_group_rotation_orbits_children_and_adds_shape_rotation() {
+    // A group rotated 90° cw: a child shape at the group's right edge must
+    // move to the bottom edge, and the child's own rotation gains the
+    // group's angle.
+    let child = r#"<p:sp><p:nvSpPr><p:cNvPr id="2" name="S"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm rot="1800000"><a:off x="1828800" y="762000"/><a:ext cx="457200" cy="304800"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:solidFill><a:srgbClr val="FF0000"/></a:solidFill></p:spPr></p:sp>"#;
+    let group = format!(
+        r#"<p:grpSp><p:nvGrpSpPr><p:cNvPr id="10" name="G"/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr><a:xfrm rot="5400000"><a:off x="914400" y="914400"/><a:ext cx="2286000" cy="1828800"/><a:chOff x="0" y="0"/><a:chExt cx="2286000" cy="1828800"/></a:xfrm></p:grpSpPr>{child}</p:grpSp>"#
+    );
+    let slide = make_slide_xml(&[group]);
+    let data = build_test_pptx(SLIDE_CX, SLIDE_CY, &[slide]);
+
+    let parser = PptxParser;
+    let (doc, _warnings) = parser.parse(&data, &ConvertOptions::default()).unwrap();
+    let page = first_fixed_page(&doc);
+    let elem = &page.elements[0];
+
+    // Group center: (162, 144) pt. Child center maps to (234, 144) pt,
+    // i.e. +72pt right of center; rotated 90° cw -> +72pt below -> (162, 216).
+    let center_x = elem.x + elem.width / 2.0;
+    let center_y = elem.y + elem.height / 2.0;
+    assert!((center_x - 162.0).abs() < 0.5, "center x {center_x}");
+    assert!((center_y - 216.0).abs() < 0.5, "center y {center_y}");
+
+    let FixedElementKind::Shape(ref shape) = elem.kind else {
+        panic!("expected shape");
+    };
+    // Child's own 30° plus the group's 90°.
+    assert!((shape.rotation_deg.unwrap() - 120.0).abs() < 0.01);
+}
