@@ -112,6 +112,13 @@ This project follows a **6-month rolling MSRV policy** (aligned with [tokio](htt
 - For visual bug fixes tied to an issue, commit `assets/bugfixes/issue-<number>/gt.jpg`, `before.jpg`, and `after.jpg` generated from the same fixture, page, resolution, and renderer. Use progressive JPEG quality 86 with metadata stripped, preserve the source pixel dimensions, and verify text and images remain legible for direct GitHub links.
 - **When filing a visual defect issue, attach a side-by-side image (GT left, office2pdf output at filing time right)** rendered from the same page and resolution, committed as `assets/bugfixes/issue-<number>/compare.jpg` (same JPEG rules as above) and embedded in the issue body via a commit-pinned raw URL. For classified fixtures, confirm with the user before publishing the image; the surrounding issue text must still follow the Confidentiality rules.
 
+### Visual check discipline (harness rules)
+
+- **Enumerate before fixing.** For every compared page, walk this checklist and record each deviation before touching code: page count/order; element presence; position; size; rotation/flip; fill; stroke/border (incl. dash style); text content; font family/weight/style; text color; alignment; line/paragraph spacing; clipping/overflow.
+- **One issue per root cause.** When one image reveals multiple independent defects, file a separate issue for each — never bundle them into one issue or one PR. Fix them sequentially.
+- **Closing condition.** An issue may be closed only when a fresh GT comparison shows its specific defect gone. Every remaining visible deviation on that comparison must already have its own open issue — file the missing ones before closing.
+- **After images are re-audited.** When posting an after image, re-run the checklist on it; each still-visible deviation gets an issue reference in the PR body ("remaining, tracked in #N").
+
 When comparing PDF output against ground truth (classified fixtures):
 
 1. Run `cargo test -p office2pdf --test artifact_generator -- --ignored --nocapture` to generate artifacts.
