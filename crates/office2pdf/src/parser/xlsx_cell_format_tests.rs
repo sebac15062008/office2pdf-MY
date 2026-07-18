@@ -1030,8 +1030,7 @@ fn test_wrapping_row_without_custom_height_stays_auto() {
     let (doc, _warnings) = parser.parse(&data, &ConvertOptions::default()).unwrap();
     let tp = get_sheet_page(&doc, 0);
     assert_eq!(
-        tp.table.rows[0].height,
-        None,
+        tp.table.rows[0].height, None,
         "auto-sized wrapping rows stay content-driven"
     );
 }
