@@ -557,6 +557,9 @@ struct ShapeState {
     adj_values: Vec<f64>,
     /// Fallback line color from `<p:style><a:lnRef>` scheme reference.
     style_ln_color: Option<Color>,
+    /// `<a:lnRef idx>` (1-based) into the theme line style list, for the
+    /// fallback outline width when no explicit `<a:ln w>` is present.
+    style_ln_idx: Option<usize>,
     /// Fallback fill color from `<p:style><a:fillRef>` scheme reference.
     style_fill_color: Option<Color>,
     /// Fallback text color from `<p:style><a:fontRef>` scheme reference.
@@ -595,6 +598,7 @@ impl Default for ShapeState {
             tail_end: ArrowHead::None,
             adj_values: Vec::new(),
             style_ln_color: None,
+            style_ln_idx: None,
             style_fill_color: None,
             style_font_color: None,
             explicit_no_fill: false,
@@ -613,6 +617,7 @@ impl ShapeState {
 /// Finalize a shape element when `</p:sp>` is reached.
 /// Returns elements to add: for shapes with text AND non-rectangular geometry,
 /// returns two elements (shape background + transparent text overlay).
+#[allow(clippy::too_many_arguments)]
 fn finalize_shape(
     shape: &mut ShapeState,
     paragraphs: &mut Vec<PptxParagraphEntry>,
@@ -621,7 +626,20 @@ fn finalize_shape(
     text_box_no_wrap: bool,
     text_box_auto_fit: bool,
     text_box_text_rotation_deg: Option<f64>,
+    theme_line_style_widths: &[i64],
 ) -> Vec<FixedElement> {
+    // Outline width: explicit `<a:ln w>` when present, otherwise the theme
+    // line style referenced by `<a:lnRef idx>` (issue #318).
+    let effective_ln_width_emu: i64 = if shape.ln_width_emu > 0 {
+        shape.ln_width_emu
+    } else {
+        shape
+            .style_ln_idx
+            .and_then(|idx| theme_line_style_widths.get(idx - 1).copied())
+            .unwrap_or(shape.ln_width_emu)
+    };
+    let effective_ln_width_pt: f64 = emu_to_pt(effective_ln_width_emu);
+
     // Resolve effective fill: explicit > noFill > style fallback.
     let effective_fill: Option<Color> = if shape.fill.is_some() {
         shape.fill
@@ -640,7 +658,7 @@ fn finalize_shape(
         // Use explicit line color, falling back to style-based color from <p:style><a:lnRef>.
         let effective_ln_color: Option<Color> = shape.ln_color.or(shape.style_ln_color);
         let stroke: Option<BorderSide> = effective_ln_color.map(|color| BorderSide {
-            width: emu_to_pt(shape.ln_width_emu),
+            width: effective_ln_width_pt,
             color,
             style: shape.ln_dash_style,
         });
@@ -749,7 +767,7 @@ fn finalize_shape(
         // Use explicit line color, falling back to style-based color from <p:style><a:lnRef>.
         let effective_ln_color: Option<Color> = shape.ln_color.or(shape.style_ln_color);
         let stroke: Option<BorderSide> = effective_ln_color.map(|color| BorderSide {
-            width: emu_to_pt(shape.ln_width_emu),
+            width: effective_ln_width_pt,
             color,
             style: shape.ln_dash_style,
         });
@@ -1380,9 +1398,27 @@ impl<'a> SlideXmlParser<'a> {
                     &mut self.pic,
                 );
             }
+            // Style-matrix ref colors (`<a:lnRef>`/`<a:fillRef>`/`<a:fontRef>`)
+            // can carry shade/tint transforms, which arrive as Start events;
+            // the Empty-event arms below would miss them.
+            b"srgbClr" | b"schemeClr" | b"sysClr" if self.in_style_ln_ref => {
+                let parsed = parse_color_from_start(reader, e, self.theme, self.color_map);
+                self.shape.style_ln_color = parsed.color;
+            }
+            b"srgbClr" | b"schemeClr" | b"sysClr" if self.in_style_fill_ref => {
+                let parsed = parse_color_from_start(reader, e, self.theme, self.color_map);
+                self.shape.style_fill_color = parsed.color;
+            }
+            b"srgbClr" | b"schemeClr" | b"sysClr" if self.in_style_font_ref => {
+                let parsed = parse_color_from_start(reader, e, self.theme, self.color_map);
+                self.shape.style_font_color = parsed.color;
+            }
             // `<a:lnRef>` inside `<p:style>` provides fallback line color.
             b"lnRef" if self.in_shape && !self.shape.in_sp_pr && !self.in_txbody => {
                 self.in_style_ln_ref = true;
+                self.shape.style_ln_idx = get_attr_str(e, b"idx")
+                    .and_then(|value| value.parse::<usize>().ok())
+                    .filter(|idx| *idx > 0);
             }
             // `<a:fillRef>` inside `<p:style>` provides fallback fill color.
             b"fillRef" if self.in_shape && !self.shape.in_sp_pr && !self.in_txbody => {
@@ -1730,6 +1766,7 @@ impl<'a> SlideXmlParser<'a> {
                             self.text_box_no_wrap,
                             self.text_box_auto_fit,
                             self.text_box_text_rotation_deg,
+                            &self.theme.line_style_widths,
                         ));
                     }
                     self.in_shape = false;

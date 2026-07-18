@@ -627,3 +627,25 @@ fn test_layout_shape_uses_master_color_map_with_luminance_offset() {
     let shape = get_shape(&page.elements[0]);
     assert_eq!(shape.fill, Some(Color::new(0x80, 0x80, 0x80)));
 }
+
+#[test]
+fn test_parse_theme_line_style_widths() {
+    // Theme lnStyleLst widths back <a:lnRef idx="N"> outline resolution
+    // (issue #318): idx=1/2/3 map to the 1st/2nd/3rd entry's EMU width.
+    let theme_xml = r#"<?xml version="1.0"?>
+<a:theme xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+  <a:themeElements>
+    <a:clrScheme name="X"><a:dk1><a:srgbClr val="000000"/></a:dk1></a:clrScheme>
+    <a:fontScheme name="X"><a:majorFont><a:latin typeface="Calibri"/></a:majorFont><a:minorFont><a:latin typeface="Calibri"/></a:minorFont></a:fontScheme>
+    <a:fmtScheme name="X">
+      <a:lnStyleLst>
+        <a:ln w="6350"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:ln>
+        <a:ln w="12700"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:ln>
+        <a:ln w="19050"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:ln>
+      </a:lnStyleLst>
+    </a:fmtScheme>
+  </a:themeElements>
+</a:theme>"#;
+    let theme = parse_theme_xml(theme_xml);
+    assert_eq!(theme.line_style_widths, vec![6350, 12700, 19050]);
+}

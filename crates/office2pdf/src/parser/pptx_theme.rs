@@ -17,6 +17,9 @@ pub(super) struct ThemeData {
     /// Raw XML of each `<a:fmtScheme>/<a:bgFillStyleLst>` entry, for
     /// `<p:bgRef>` idx ≥ 1001 resolution.
     pub(super) bg_fill_styles: Vec<String>,
+    /// Line widths (EMU) of each `<a:fmtScheme>/<a:lnStyleLst>/<a:ln>` entry,
+    /// for `<a:lnRef idx="N">` outline width resolution.
+    pub(super) line_style_widths: Vec<i64>,
 }
 
 /// Effective scheme-color aliases for a slide part.
@@ -452,8 +455,44 @@ pub(super) fn parse_theme_xml(xml: &str) -> ThemeData {
 
     theme.fill_styles = extract_fill_style_entries(xml, b"fillStyleLst");
     theme.bg_fill_styles = extract_fill_style_entries(xml, b"bgFillStyleLst");
+    theme.line_style_widths = extract_line_style_widths(xml);
 
     theme
+}
+
+/// Extract the `w` (EMU) of each `<a:ln>` inside the theme `<a:lnStyleLst>`.
+fn extract_line_style_widths(xml: &str) -> Vec<i64> {
+    let mut reader = Reader::from_str(xml);
+    let mut widths: Vec<i64> = Vec::new();
+    let mut in_list = false;
+    loop {
+        match reader.read_event() {
+            Ok(Event::Start(ref e)) => match e.local_name().as_ref() {
+                b"lnStyleLst" => in_list = true,
+                b"ln" if in_list => {
+                    widths.push(line_width_attr(e));
+                }
+                _ => {}
+            },
+            Ok(Event::Empty(ref e)) if in_list && e.local_name().as_ref() == b"ln" => {
+                widths.push(line_width_attr(e));
+            }
+            Ok(Event::End(ref e)) if e.local_name().as_ref() == b"lnStyleLst" => break,
+            Ok(Event::Eof) => break,
+            Err(_) => break,
+            _ => {}
+        }
+    }
+    widths
+}
+
+fn line_width_attr(e: &BytesStart<'_>) -> i64 {
+    e.attributes()
+        .flatten()
+        .find(|attr| attr.key.local_name().as_ref() == b"w")
+        .and_then(|attr| attr.unescape_value().ok())
+        .and_then(|value| value.parse::<i64>().ok())
+        .unwrap_or(0)
 }
 
 /// Extract the raw XML of each top-level fill entry (`<a:solidFill>`,

@@ -613,3 +613,44 @@ fn test_split_textbox_preserves_alignment() {
         typst_output.source,
     );
 }
+
+#[test]
+fn test_shape_style_lnref_outline_resolves_width_and_shaded_color() {
+    // A shape whose outline comes only from <p:style><a:lnRef idx=..> with a
+    // shaded scheme color (a Start-event color) must render a stroke: width
+    // from the theme lnStyleLst, color from the resolved scheme (issue #318).
+    let theme_xml = r#"<?xml version="1.0"?>
+<a:theme xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+  <a:themeElements>
+    <a:clrScheme name="X">
+      <a:dk1><a:srgbClr val="000000"/></a:dk1><a:lt1><a:srgbClr val="FFFFFF"/></a:lt1>
+      <a:accent1><a:srgbClr val="4472C4"/></a:accent1>
+    </a:clrScheme>
+    <a:fontScheme name="X"><a:majorFont><a:latin typeface="Calibri"/></a:majorFont><a:minorFont><a:latin typeface="Calibri"/></a:minorFont></a:fontScheme>
+    <a:fmtScheme name="X"><a:lnStyleLst>
+      <a:ln w="6350"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:ln>
+      <a:ln w="12700"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:ln>
+      <a:ln w="19050"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:ln>
+    </a:lnStyleLst></a:fmtScheme>
+  </a:themeElements>
+</a:theme>"#;
+    let shape = r#"<p:sp><p:nvSpPr><p:cNvPr id="2" name="Shape"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="914400"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:solidFill><a:srgbClr val="4472C4"/></a:solidFill></p:spPr><p:style><a:lnRef idx="2"><a:schemeClr val="accent1"><a:shade val="50000"/></a:schemeClr></a:lnRef><a:fillRef idx="1"><a:schemeClr val="accent1"/></a:fillRef></p:style></p:sp>"#.to_string();
+    let slide = make_slide_xml(&[shape]);
+    let data = build_test_pptx_with_theme(SLIDE_CX, SLIDE_CY, &[slide], theme_xml);
+
+    let parser = PptxParser;
+    let (doc, _warnings) = parser.parse(&data, &ConvertOptions::default()).unwrap();
+    let page = first_fixed_page(&doc);
+    let FixedElementKind::Shape(ref s) = page.elements[0].kind else {
+        panic!("expected shape");
+    };
+    let stroke = s.stroke.as_ref().expect("lnRef must produce a stroke");
+    // idx=2 → theme lnStyleLst[1] = 12700 EMU = 1pt.
+    assert!(
+        (stroke.width - 1.0).abs() < 0.01,
+        "outline width from theme lnStyleLst idx 2, got {}",
+        stroke.width
+    );
+    // accent1 (4472C4) shaded 50% ≈ half each channel.
+    assert_eq!(stroke.color, Color::new(0x22, 0x39, 0x62));
+}
