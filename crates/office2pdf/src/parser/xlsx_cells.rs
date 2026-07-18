@@ -358,11 +358,13 @@ fn compute_spill_width(
 
     let mut total_width: f64 = own_width;
     let mut has_empty_neighbor = false;
+    let mut blocked = false;
     for neighbor_col in (col_idx + 1)..=ctx.col_end {
         // Merged regions block the spill like occupied cells do.
         if ctx.merge_skips.contains(&(neighbor_col, row_idx))
             || ctx.merge_tops.contains_key(&(neighbor_col, row_idx))
         {
+            blocked = true;
             break;
         }
         let neighbor_is_empty: bool = sheet
@@ -370,6 +372,7 @@ fn compute_spill_width(
             .map(|cell| cell.get_formatted_value().is_empty())
             .unwrap_or(true);
         if !neighbor_is_empty {
+            blocked = true;
             break;
         }
         total_width += *ctx
@@ -377,6 +380,17 @@ fn compute_spill_width(
             .get((neighbor_col - ctx.col_start) as usize)
             .unwrap_or(&0.0);
         has_empty_neighbor = true;
+    }
+
+    // Every used cell to the right is empty: Excel keeps painting across
+    // the virtual empty cells beyond the used range toward the page edge.
+    // Give the text the width it needs; the page boundary clips the rest.
+    if !blocked {
+        let needed_width: f64 = estimate_text_width_pt(runs) + 4.0;
+        if needed_width > total_width {
+            total_width = needed_width;
+            has_empty_neighbor = true;
+        }
     }
 
     has_empty_neighbor.then_some(total_width)

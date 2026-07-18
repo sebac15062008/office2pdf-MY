@@ -1219,3 +1219,47 @@ fn test_native_digit_locale_format_renders_arabic_indic_digits() {
         "native-digit locale prefix must map to Arabic-Indic digits"
     );
 }
+
+// ----- Spill past the used range (issue #309) -----
+
+#[test]
+fn test_spill_extends_past_used_range_over_virtual_cells() {
+    // Single used column: Excel paints the text across the virtual empty
+    // cells to the right instead of wrapping inside column A.
+    let data = build_xlsx_formatted(|sheet| {
+        sheet
+            .get_cell_mut("A1")
+            .set_value("text with comment stretching well past column A");
+        sheet.get_cell_mut("A2").set_value("둘째");
+    });
+    let parser = XlsxParser;
+    let (doc, _warnings) = parser.parse(&data, &ConvertOptions::default()).unwrap();
+    let tp = get_sheet_page(&doc, 0);
+
+    let cell = &tp.table.rows[0].cells[0];
+    let own_width = tp.table.column_widths[0];
+    let spill_width = cell
+        .spill_width
+        .expect("text must spill past the used range");
+    assert!(
+        spill_width > own_width * 2.0,
+        "spill ({spill_width}pt) must extend well past the single {own_width}pt column"
+    );
+}
+
+#[test]
+fn test_spill_still_blocked_by_occupied_neighbor() {
+    let data = build_xlsx_formatted(|sheet| {
+        sheet
+            .get_cell_mut("A1")
+            .set_value("text with comment stretching well past column A");
+        sheet.get_cell_mut("B1").set_value("차단");
+    });
+    let parser = XlsxParser;
+    let (doc, _warnings) = parser.parse(&data, &ConvertOptions::default()).unwrap();
+    let tp = get_sheet_page(&doc, 0);
+    assert_eq!(
+        tp.table.rows[0].cells[0].spill_width, None,
+        "an occupied neighbor still blocks the spill"
+    );
+}
