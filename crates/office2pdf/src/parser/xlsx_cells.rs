@@ -4,7 +4,8 @@ use crate::ir::{Block, Paragraph, ParagraphStyle, Run, TableRow};
 use crate::parser::cond_fmt::build_cond_fmt_overrides;
 
 use super::xlsx_style::{
-    extract_cell_alignment, extract_cell_background, extract_cell_borders, extract_cell_text_style,
+    apply_rich_run_font, extract_cell_alignment, extract_cell_background, extract_cell_borders,
+    extract_cell_text_style,
 };
 use crate::ir::TableCell;
 
@@ -220,7 +221,38 @@ pub(super) fn build_rows_for_range(
                 icon_text = ovr.icon_text.clone();
             }
 
-            let content = if value.is_empty() {
+            // Rich-text shared strings carry per-run formatting (bold labels,
+            // per-run fonts/colors) that the cell's single xf style loses —
+            // emit one IR run per rich run instead of flattening.
+            let rich_text: Option<umya_spreadsheet::RichText> =
+                umya_cell.and_then(|cell| cell.get_cell_value().get_raw_value().get_rich_text());
+            let runs: Vec<Run> = if let Some(rich_text) = rich_text {
+                rich_text
+                    .get_rich_text_elements()
+                    .iter()
+                    .filter(|element| !element.get_text().is_empty())
+                    .map(|element| Run {
+                        text: element.get_text().to_string(),
+                        style: element
+                            .get_run_properties()
+                            .map(|font| apply_rich_run_font(&text_style, font))
+                            .unwrap_or_else(|| text_style.clone()),
+                        href: None,
+                        footnote: None,
+                    })
+                    .collect()
+            } else if value.is_empty() {
+                Vec::new()
+            } else {
+                vec![Run {
+                    text: value,
+                    style: text_style,
+                    href: None,
+                    footnote: None,
+                }]
+            };
+
+            let content = if runs.is_empty() {
                 Vec::new()
             } else {
                 vec![Block::Paragraph(Paragraph {
@@ -228,12 +260,7 @@ pub(super) fn build_rows_for_range(
                         alignment: cell_alignment,
                         ..ParagraphStyle::default()
                     },
-                    runs: vec![Run {
-                        text: value,
-                        style: text_style,
-                        href: None,
-                        footnote: None,
-                    }],
+                    runs,
                 })]
             };
 

@@ -76,6 +76,49 @@ pub(super) fn extract_cell_text_style(cell: &umya_spreadsheet::Cell) -> TextStyl
     }
 }
 
+/// Overlay a rich-text run's own font properties onto the cell-level style.
+/// Excel writes only the properties a run changes into its `<rPr>`, so
+/// unspecified properties (empty name, zero size, absent color) must keep the
+/// cell style rather than reset to defaults.
+pub(super) fn apply_rich_run_font(base: &TextStyle, font: &umya_spreadsheet::Font) -> TextStyle {
+    let mut style = base.clone();
+
+    let font_name: &str = font.get_name();
+    if !font_name.is_empty() && font_name != "Calibri" {
+        style.font_family = Some(font_name.to_string());
+    }
+
+    let raw_size: f64 = *font.get_size();
+    if raw_size > 0.0 {
+        style.font_size = Some(raw_size);
+    }
+
+    if *font.get_bold() {
+        style.bold = Some(true);
+    }
+    if *font.get_italic() {
+        style.italic = Some(true);
+    }
+    if !matches!(
+        font.get_font_underline().get_val(),
+        umya_spreadsheet::UnderlineValues::None
+    ) {
+        style.underline = Some(true);
+    }
+    if *font.get_strikethrough() {
+        style.strikethrough = Some(true);
+    }
+
+    let color_argb: &str = font.get_color().get_argb();
+    if !color_argb.is_empty()
+        && let Some(color) = parse_argb_color(color_argb)
+    {
+        style.color = Some(color);
+    }
+
+    style
+}
+
 /// Extract background color from a cell's style.
 pub(super) fn extract_cell_background(cell: &umya_spreadsheet::Cell) -> Option<Color> {
     let bg = cell.get_style().get_background_color()?;
