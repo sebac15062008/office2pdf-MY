@@ -233,6 +233,51 @@ pub(super) struct SheetContext {
     pub(super) cond_fmt_overrides: HashMap<(u32, u32), crate::parser::cond_fmt::CondFmtOverride>,
 }
 
+/// First strong bidi direction of a character: Some(true) for right-to-left
+/// scripts (Hebrew, Arabic and its supplements), Some(false) for Latin-like
+/// letters, None for neutral characters (digits, punctuation, spaces).
+fn strong_direction(c: char) -> Option<bool> {
+    match c as u32 {
+        // Hebrew, Arabic, Syriac, Thaana, and Arabic presentation forms.
+        0x0590..=0x08FF | 0xFB1D..=0xFDFF | 0xFE70..=0xFEFF => Some(true),
+        _ if c.is_alphabetic() => Some(false),
+        _ => None,
+    }
+}
+
+/// Map ASCII digits (and separators) to Arabic-Indic digits, as Excel does
+/// for number formats carrying a native-digit locale prefix like
+/// `[$-3000401]`.
+fn to_arabic_indic_digits(value: &str) -> String {
+    value
+        .chars()
+        .map(|c| match c {
+            '0'..='9' => char::from_u32(0x0660 + (c as u32 - '0' as u32)).unwrap_or(c),
+            '.' => '\u{066B}',
+            ',' => '\u{066C}',
+            _ => c,
+        })
+        .collect()
+}
+
+/// Excel number formats may carry a locale prefix `[$-XXXXXXXX]` whose high
+/// byte selects digit shaping (>= 2 substitutes national digits). Arabic
+/// primary language (low byte 0x01) then prints Arabic-Indic digits.
+fn uses_native_arabic_digits(format_code: &str) -> bool {
+    let Some(rest) = format_code.strip_prefix("[$-") else {
+        return false;
+    };
+    let Some(end) = rest.find(']') else {
+        return false;
+    };
+    let Ok(locale) = u64::from_str_radix(&rest[..end], 16) else {
+        return false;
+    };
+    let digit_substitution: u64 = locale >> 24;
+    let language_id: u64 = locale & 0xFF;
+    digit_substitution >= 2 && language_id == 0x01
+}
+
 /// Rough single-line text width estimate in points: ASCII glyphs average
 /// about half the font size in Calibri-class fonts, CJK glyphs are full-width.
 fn estimate_text_width_pt(runs: &[Run]) -> f64 {
@@ -389,9 +434,15 @@ pub(super) fn build_rows_for_range(
 
             // umya-spreadsheet tuple is (column, row), both 1-indexed
             let umya_cell = sheet.get_cell((col_idx, row_idx));
-            let value = umya_cell
+            let mut value = umya_cell
                 .map(|cell| cell.get_formatted_value())
                 .unwrap_or_default();
+            if let Some(cell) = umya_cell
+                && let Some(number_format) = cell.get_style().get_number_format()
+                && uses_native_arabic_digits(number_format.get_format_code())
+            {
+                value = to_arabic_indic_digits(&value);
+            }
 
             // Extract formatting from the cell
             let mut text_style = umya_cell.map(extract_cell_text_style).unwrap_or_default();
@@ -450,6 +501,17 @@ pub(super) fn build_rows_for_range(
                     footnote: None,
                 }]
             };
+
+            // Excel's "general" horizontal alignment follows the text
+            // direction: cells whose text starts with a right-to-left script
+            // print right-aligned.
+            let cell_alignment: Option<crate::ir::Alignment> = cell_alignment.or_else(|| {
+                runs.iter()
+                    .flat_map(|run| run.text.chars())
+                    .find_map(strong_direction)
+                    .filter(|is_rtl| *is_rtl)
+                    .map(|_| crate::ir::Alignment::Right)
+            });
 
             let (col_span, row_span) = if let Some(info) = ctx.merge_tops.get(&(col_idx, row_idx)) {
                 (info.col_span, info.row_span)

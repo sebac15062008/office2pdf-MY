@@ -1154,3 +1154,68 @@ fn test_print_titles_with_both_rows_and_columns() {
         "column titles parsed from the multi-part address"
     );
 }
+
+// ----- RTL text presentation (issue #236) -----
+
+#[test]
+fn test_rtl_text_right_aligns_under_general_alignment() {
+    let data = build_xlsx_formatted(|sheet| {
+        sheet.get_cell_mut("A1").set_value("نص");
+        sheet.get_cell_mut("A2").set_value("עִבְרִית");
+        sheet.get_cell_mut("A3").set_value("text");
+    });
+    let parser = XlsxParser;
+    let (doc, _warnings) = parser.parse(&data, &ConvertOptions::default()).unwrap();
+    let tp = get_sheet_page(&doc, 0);
+
+    let alignment_of = |row: usize| match &tp.table.rows[row].cells[0].content[0] {
+        Block::Paragraph(p) => p.style.alignment,
+        _ => panic!("expected paragraph"),
+    };
+    assert_eq!(
+        alignment_of(0),
+        Some(crate::ir::Alignment::Right),
+        "Arabic text under general alignment renders right-aligned in Excel"
+    );
+    assert_eq!(alignment_of(1), Some(crate::ir::Alignment::Right));
+    assert_eq!(alignment_of(2), None, "Latin text keeps the default");
+}
+
+#[test]
+fn test_explicit_alignment_wins_over_rtl_text() {
+    let data = build_xlsx_formatted(|sheet| {
+        let cell = sheet.get_cell_mut("A1");
+        cell.set_value("نص");
+        cell.get_style_mut()
+            .get_alignment_mut()
+            .set_horizontal(umya_spreadsheet::HorizontalAlignmentValues::Left);
+    });
+    let parser = XlsxParser;
+    let (doc, _warnings) = parser.parse(&data, &ConvertOptions::default()).unwrap();
+    let tp = get_sheet_page(&doc, 0);
+    let Block::Paragraph(p) = &tp.table.rows[0].cells[0].content[0] else {
+        panic!("expected paragraph");
+    };
+    assert_eq!(p.style.alignment, Some(crate::ir::Alignment::Left));
+}
+
+#[test]
+fn test_native_digit_locale_format_renders_arabic_indic_digits() {
+    let data = build_xlsx_formatted(|sheet| {
+        let cell = sheet.get_cell_mut("A1");
+        cell.set_value_number(123.0);
+        cell.get_style_mut()
+            .get_number_format_mut()
+            .set_format_code("[$-3000401]0");
+    });
+    let parser = XlsxParser;
+    let (doc, _warnings) = parser.parse(&data, &ConvertOptions::default()).unwrap();
+    let tp = get_sheet_page(&doc, 0);
+    let Block::Paragraph(p) = &tp.table.rows[0].cells[0].content[0] else {
+        panic!("expected paragraph");
+    };
+    assert_eq!(
+        p.runs[0].text, "١٢٣",
+        "native-digit locale prefix must map to Arabic-Indic digits"
+    );
+}
