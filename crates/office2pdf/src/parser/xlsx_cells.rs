@@ -33,7 +33,10 @@ pub(super) const DEFAULT_COLUMN_WIDTH: f64 = 8.43;
 /// Excel character width ≈ 7 pixels at 96 DPI, 1 point = 96/72 pixels.
 /// Empirically: width_pt ≈ char_width * 7.0 (approximate, close to Excel's rendering).
 pub(super) fn column_width_to_pt(char_width: f64) -> f64 {
-    char_width * 7.0
+    // Excel: pixels = width(chars) x 7 (MDW for Calibri 11) + 5px padding;
+    // points = pixels x 72/96. Treating chars x 7 directly as points made
+    // every column ~23% wider than Excel prints it.
+    (char_width * 7.0 + 5.0) * 0.75
 }
 
 /// Parse an Excel column letter string (e.g., "A", "B", "AA") into a 1-indexed column number.

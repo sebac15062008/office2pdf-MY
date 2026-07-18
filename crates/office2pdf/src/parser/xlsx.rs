@@ -26,6 +26,16 @@ use self::xlsx_hf::*;
 pub(crate) use self::xlsx_cells::{CellPos, CellRange, parse_cell_ref};
 
 /// Parser for XLSX (Office Open XML Excel) spreadsheets.
+/// Excel's default print margins: 0.7" left/right, 0.75" top/bottom.
+fn excel_default_margins() -> Margins {
+    Margins {
+        top: 54.0,
+        bottom: 54.0,
+        left: 50.4,
+        right: 50.4,
+    }
+}
+
 pub struct XlsxParser;
 
 impl XlsxParser {
@@ -95,7 +105,7 @@ impl XlsxParser {
                     pages: xlsx_pagination::split_sheet_page_by_width(SheetPage {
                         name: sheet_name.clone(),
                         size: PageSize::default(),
-                        margins: Margins::default(),
+                        margins: excel_default_margins(),
                         table: Table {
                             rows,
                             column_widths: ctx.column_widths.clone(),
@@ -191,7 +201,7 @@ impl Parser for XlsxParser {
                     xlsx_pagination::split_sheet_page_by_width(SheetPage {
                         name: sheet_name,
                         size: PageSize::default(),
-                        margins: Margins::default(),
+                        margins: excel_default_margins(),
                         table: Table {
                             rows,
                             column_widths: ctx.column_widths,
@@ -236,7 +246,7 @@ impl Parser for XlsxParser {
                         xlsx_pagination::split_sheet_page_by_width(SheetPage {
                             name: sheet_name.clone(),
                             size: PageSize::default(),
-                            margins: Margins::default(),
+                            margins: excel_default_margins(),
                             table: Table {
                                 rows: segment,
                                 column_widths: ctx.column_widths.clone(),

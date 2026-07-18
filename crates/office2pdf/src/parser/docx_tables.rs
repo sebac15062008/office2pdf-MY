@@ -165,7 +165,8 @@ pub(super) fn convert_table(
         column_widths.reverse();
     }
 
-    let rows = resolve_vmerge_and_build_rows(&raw_rows);
+    let mut rows = resolve_vmerge_and_build_rows(&raw_rows);
+    apply_table_level_borders(&mut rows, table_prop_json.as_ref());
 
     Table {
         rows,
@@ -434,6 +435,73 @@ fn extract_cell_content(
         }
     }
     blocks
+}
+
+/// Expand table-level `w:tblBorders` onto cells that carry no explicit
+/// borders of their own: outer sides on edge cells, insideH/insideV between
+/// cells. Previously these tables relied on Typst's default grid, which the
+/// renderer no longer paints.
+fn apply_table_level_borders(rows: &mut [TableRow], table_prop_json: Option<&serde_json::Value>) {
+    let Some(borders) = table_prop_json.and_then(|j| j.get("borders")) else {
+        return;
+    };
+    if borders.is_null() {
+        return;
+    }
+    let outer: Option<CellBorder> = extract_cell_borders(borders);
+    let inside_h: Option<BorderSide> = extract_border_side(borders, "insideH");
+    let inside_v: Option<BorderSide> = extract_border_side(borders, "insideV");
+    if outer.is_none() && inside_h.is_none() && inside_v.is_none() {
+        return;
+    }
+
+    let row_count = rows.len();
+    for (row_index, row) in rows.iter_mut().enumerate() {
+        let cell_count = row.cells.len();
+        for (cell_index, cell) in row.cells.iter_mut().enumerate() {
+            if cell.border.is_some() {
+                continue;
+            }
+            let is_first_row = row_index == 0;
+            let is_last_row = row_index + 1 == row_count;
+            let is_first_col = cell_index == 0;
+            let is_last_col = cell_index + 1 == cell_count;
+            let border = CellBorder {
+                top: if is_first_row {
+                    outer.as_ref().and_then(|b| b.top.clone())
+                } else {
+                    inside_h.clone()
+                },
+                bottom: if is_last_row {
+                    outer.as_ref().and_then(|b| b.bottom.clone())
+                } else {
+                    inside_h.clone()
+                },
+                left: if is_first_col {
+                    outer.as_ref().and_then(|b| b.left.clone())
+                } else {
+                    inside_v.clone()
+                },
+                right: if is_last_col {
+                    outer.as_ref().and_then(|b| b.right.clone())
+                } else {
+                    inside_v.clone()
+                },
+            };
+            if border.top.is_some()
+                || border.bottom.is_some()
+                || border.left.is_some()
+                || border.right.is_some()
+            {
+                cell.border = Some(border);
+            }
+        }
+    }
+}
+
+fn extract_border_side(borders_json: &serde_json::Value, key: &str) -> Option<BorderSide> {
+    extract_cell_borders(&serde_json::json!({ "top": borders_json.get(key)? }))
+        .and_then(|border| border.top)
 }
 
 fn extract_cell_borders(borders_json: &serde_json::Value) -> Option<CellBorder> {

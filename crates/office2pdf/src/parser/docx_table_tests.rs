@@ -771,3 +771,54 @@ fn test_table_empty_cells() {
         assert_eq!(cell.row_span, 1);
     }
 }
+
+#[test]
+fn test_table_level_borders_expand_to_cells() {
+    // w:tblBorders (single, incl. insideH/insideV) must reach cells now that
+    // the renderer no longer paints a default grid.
+    let table = docx_rs::Table::new(vec![
+        docx_rs::TableRow::new(vec![
+            docx_rs::TableCell::new().add_paragraph(
+                docx_rs::Paragraph::new().add_run(docx_rs::Run::new().add_text("A1")),
+            ),
+            docx_rs::TableCell::new().add_paragraph(
+                docx_rs::Paragraph::new().add_run(docx_rs::Run::new().add_text("B1")),
+            ),
+        ]),
+        docx_rs::TableRow::new(vec![
+            docx_rs::TableCell::new().add_paragraph(
+                docx_rs::Paragraph::new().add_run(docx_rs::Run::new().add_text("A2")),
+            ),
+            docx_rs::TableCell::new().add_paragraph(
+                docx_rs::Paragraph::new().add_run(docx_rs::Run::new().add_text("B2")),
+            ),
+        ]),
+    ])
+    .set_borders(docx_rs::TableBorders::new());
+    let docx = docx_rs::Docx::new().add_table(table);
+    let mut cursor = Cursor::new(Vec::new());
+    docx.build().pack(&mut cursor).unwrap();
+
+    let parser = DocxParser;
+    let (doc, _warnings) = parser
+        .parse(&cursor.into_inner(), &ConvertOptions::default())
+        .unwrap();
+    let page = match &doc.pages[0] {
+        Page::Flow(p) => p,
+        _ => panic!("Expected FlowPage"),
+    };
+    let table = page
+        .content
+        .iter()
+        .find_map(|b| match b {
+            Block::Table(t) => Some(t),
+            _ => None,
+        })
+        .expect("table");
+    let first = table.rows[0].cells[0]
+        .border
+        .as_ref()
+        .expect("cell border from tblBorders");
+    assert!(first.top.is_some(), "outer top on first row");
+    assert!(first.bottom.is_some(), "insideH between rows");
+}
