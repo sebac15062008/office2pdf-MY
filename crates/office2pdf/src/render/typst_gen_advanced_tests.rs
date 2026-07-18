@@ -825,3 +825,49 @@ fn test_generate_regular_paragraph_no_heading() {
         "Regular paragraph should not emit #heading: {result}"
     );
 }
+
+#[test]
+fn test_spill_width_codegen() {
+    let cell = TableCell {
+        content: vec![Block::Paragraph(Paragraph {
+            style: ParagraphStyle::default(),
+            runs: vec![Run {
+                text: "spilling text".to_string(),
+                style: TextStyle::default(),
+                href: None,
+                footnote: None,
+            }],
+        })],
+        spill_width: Some(200.0),
+        ..TableCell::default()
+    };
+    let table = Table {
+        rows: vec![TableRow {
+            cells: vec![cell],
+            height: None,
+        }],
+        column_widths: vec![60.0],
+        ..Table::default()
+    };
+    let page = Page::Sheet(SheetPage {
+        name: "Sheet1".to_string(),
+        size: PageSize::default(),
+        margins: Margins::default(),
+        table,
+        header: None,
+        footer: None,
+        charts: vec![],
+    });
+    let doc = make_doc(vec![page]);
+    let output = generate_typst(&doc).unwrap();
+    assert!(
+        output.source.contains("width: 200pt"),
+        "spilled cell must lay text out across the spill width. Got: {}",
+        output.source,
+    );
+    assert!(
+        output.source.contains("clip: true"),
+        "spilled text must clip instead of wrapping. Got: {}",
+        output.source,
+    );
+}

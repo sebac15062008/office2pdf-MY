@@ -216,7 +216,21 @@ fn generate_table_cell(
         }
     }
 
-    generate_cell_content(out, &cell.content, ctx)?;
+    if let Some(spill_width) = cell.spill_width {
+        // Excel paints unwrapped text across empty right neighbors without
+        // growing the row: lay the content out on one clipped line via
+        // #place (out of layout) and hold the row height with a zero-width
+        // strut.
+        let _ = write!(
+            out,
+            "#place(left + horizon, box(width: {}pt, height: 1.3em, clip: true)[",
+            format_f64(spill_width),
+        );
+        generate_cell_content(out, &cell.content, ctx)?;
+        out.push_str("])#box(width: 0pt, height: 1.3em)");
+    } else {
+        generate_cell_content(out, &cell.content, ctx)?;
+    }
     out.push_str("],\n");
     Ok(())
 }

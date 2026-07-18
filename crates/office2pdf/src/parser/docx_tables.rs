@@ -363,6 +363,7 @@ fn resolve_vmerge_and_build_rows(raw_rows: &[RawRow]) -> Vec<TableRow> {
                         data_bar: None,
                         icon_text: None,
                         icon_color: None,
+                        spill_width: None,
                         vertical_align: raw_cell.vertical_align,
                         padding: raw_cell.padding,
                     });
@@ -377,6 +378,7 @@ fn resolve_vmerge_and_build_rows(raw_rows: &[RawRow]) -> Vec<TableRow> {
                         data_bar: None,
                         icon_text: None,
                         icon_color: None,
+                        spill_width: None,
                         vertical_align: raw_cell.vertical_align,
                         padding: raw_cell.padding,
                     });

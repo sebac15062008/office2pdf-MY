@@ -821,3 +821,101 @@ fn test_rich_text_unstyled_run_inherits_cell_style() {
     assert_eq!(plain_run.style.italic, Some(true));
     assert_eq!(plain_run.style.bold, None);
 }
+
+// ----- Text spill into adjacent empty cells (issue #293) -----
+
+#[test]
+fn test_long_text_spills_over_empty_neighbors() {
+    let data = build_xlsx_formatted(|sheet| {
+        sheet.get_cell_mut("A1").set_value(
+            "전 직원 통일 방식으로 운영 시, 최소 주 2회 이상의 수업을 제공하는 기관과 제휴",
+        );
+        // B1..C1 empty, D1 occupied — the spill must stop before D1.
+        sheet.get_cell_mut("D1").set_value("차단");
+    });
+    let parser = XlsxParser;
+    let (doc, _warnings) = parser.parse(&data, &ConvertOptions::default()).unwrap();
+    let tp = get_sheet_page(&doc, 0);
+
+    let cell = &tp.table.rows[0].cells[0];
+    let spill_width = cell
+        .spill_width
+        .expect("long unwrapped text with empty right neighbors should spill");
+    let own_width = tp.table.column_widths[0];
+    let three_columns: f64 = tp.table.column_widths[..3].iter().sum();
+    assert!(
+        (spill_width - three_columns).abs() < 0.5,
+        "spill should cover A..C ({three_columns}pt), got {spill_width}pt (own {own_width}pt)"
+    );
+}
+
+#[test]
+fn test_short_text_does_not_spill() {
+    let data = build_xlsx_formatted(|sheet| {
+        sheet.get_cell_mut("A1").set_value("짧음");
+    });
+    let parser = XlsxParser;
+    let (doc, _warnings) = parser.parse(&data, &ConvertOptions::default()).unwrap();
+    let tp = get_sheet_page(&doc, 0);
+    assert_eq!(tp.table.rows[0].cells[0].spill_width, None);
+}
+
+#[test]
+fn test_wrap_text_disables_spill() {
+    let data = build_xlsx_formatted(|sheet| {
+        let cell = sheet.get_cell_mut("A1");
+        cell.set_value(
+            "전 직원 통일 방식으로 운영 시, 최소 주 2회 이상의 수업을 제공하는 기관과 제휴",
+        );
+        cell.get_style_mut().get_alignment_mut().set_wrap_text(true);
+    });
+    let parser = XlsxParser;
+    let (doc, _warnings) = parser.parse(&data, &ConvertOptions::default()).unwrap();
+    let tp = get_sheet_page(&doc, 0);
+    assert_eq!(
+        tp.table.rows[0].cells[0].spill_width, None,
+        "explicit wrapText must wrap inside the cell, not spill"
+    );
+}
+
+#[test]
+fn test_occupied_neighbor_blocks_spill() {
+    let data = build_xlsx_formatted(|sheet| {
+        sheet.get_cell_mut("A1").set_value(
+            "전 직원 통일 방식으로 운영 시, 최소 주 2회 이상의 수업을 제공하는 기관과 제휴",
+        );
+        sheet.get_cell_mut("B1").set_value("옆");
+    });
+    let parser = XlsxParser;
+    let (doc, _warnings) = parser.parse(&data, &ConvertOptions::default()).unwrap();
+    let tp = get_sheet_page(&doc, 0);
+    assert_eq!(
+        tp.table.rows[0].cells[0].spill_width, None,
+        "an occupied right neighbor leaves nothing to spill into"
+    );
+}
+
+#[test]
+fn test_merged_cell_clips_at_merge_edge_instead_of_wrapping() {
+    let data = build_xlsx_with_merges(
+        "Sheet1",
+        &[(
+            "A1",
+            "전 직원 통일 방식으로 운영 시, 최소 주 2회 이상의 수업을 제공하는 기관과 제휴",
+        )],
+        &["A1:C1"],
+    );
+    let parser = XlsxParser;
+    let (doc, _warnings) = parser.parse(&data, &ConvertOptions::default()).unwrap();
+    let tp = get_sheet_page(&doc, 0);
+
+    let cell = &tp.table.rows[0].cells[0];
+    let merged_width: f64 = tp.table.column_widths[..3].iter().sum();
+    let spill_width = cell
+        .spill_width
+        .expect("overflowing unwrapped text in a merge should clip, not wrap");
+    assert!(
+        (spill_width - merged_width).abs() < 0.5,
+        "clip width should equal the merged width {merged_width}pt, got {spill_width}pt"
+    );
+}

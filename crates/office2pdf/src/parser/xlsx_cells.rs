@@ -173,6 +173,110 @@ pub(super) struct SheetContext {
     pub(super) cond_fmt_overrides: HashMap<(u32, u32), crate::parser::cond_fmt::CondFmtOverride>,
 }
 
+/// Rough single-line text width estimate in points: ASCII glyphs average
+/// about half the font size in Calibri-class fonts, CJK glyphs are full-width.
+fn estimate_text_width_pt(runs: &[Run]) -> f64 {
+    runs.iter()
+        .map(|run| {
+            let font_size: f64 = run.style.font_size.unwrap_or(11.0);
+            run.text
+                .chars()
+                .map(|c| {
+                    if c.is_ascii() {
+                        0.55 * font_size
+                    } else {
+                        1.05 * font_size
+                    }
+                })
+                .sum::<f64>()
+        })
+        .sum()
+}
+
+/// Excel lets an unwrapped left-aligned text overflow into consecutive empty
+/// cells to its right without growing the row. Returns the total width the
+/// content may paint across (own column + empty neighbors), or None when the
+/// text fits, wraps, or has no empty neighbor to spill into.
+#[allow(clippy::too_many_arguments)]
+fn compute_spill_width(
+    sheet: &umya_spreadsheet::Worksheet,
+    ctx: &SheetContext,
+    col_idx: u32,
+    row_idx: u32,
+    runs: &[Run],
+    cell_alignment: Option<crate::ir::Alignment>,
+    col_span: u32,
+    umya_cell: Option<&umya_spreadsheet::Cell>,
+) -> Option<f64> {
+    if runs.is_empty() {
+        return None;
+    }
+    // Only Excel's "general"/left horizontal alignment spills to the right.
+    if !matches!(cell_alignment, None | Some(crate::ir::Alignment::Left)) {
+        return None;
+    }
+    // Explicit wrapText wraps inside the cell instead.
+    let has_wrap_text: bool = umya_cell
+        .and_then(|cell| cell.get_style().get_alignment().cloned())
+        .map(|alignment| *alignment.get_wrap_text())
+        .unwrap_or(false);
+    if has_wrap_text {
+        return None;
+    }
+    // Embedded line breaks always wrap.
+    if runs.iter().any(|run| run.text.contains('\n')) {
+        return None;
+    }
+
+    // A merged cell never paints past the merge edge: Excel keeps unwrapped
+    // text on one line and clips it at the merged width. Apply this even when
+    // the text fits — column pagination may clamp the merge to fewer columns
+    // on a page, and Excel still paints the single line across the page edge
+    // rather than wrapping it.
+    if col_span > 1 {
+        let merged_width: f64 = (col_idx..col_idx + col_span)
+            .map(|c| {
+                ctx.column_widths
+                    .get((c - ctx.col_start) as usize)
+                    .copied()
+                    .unwrap_or(0.0)
+            })
+            .sum();
+        return Some(merged_width);
+    }
+
+    let own_width: f64 = *ctx.column_widths.get((col_idx - ctx.col_start) as usize)?;
+    // Leave room for the ~4pt total horizontal cell inset.
+    if estimate_text_width_pt(runs) <= own_width - 4.0 {
+        return None;
+    }
+
+    let mut total_width: f64 = own_width;
+    let mut has_empty_neighbor = false;
+    for neighbor_col in (col_idx + 1)..=ctx.col_end {
+        // Merged regions block the spill like occupied cells do.
+        if ctx.merge_skips.contains(&(neighbor_col, row_idx))
+            || ctx.merge_tops.contains_key(&(neighbor_col, row_idx))
+        {
+            break;
+        }
+        let neighbor_is_empty: bool = sheet
+            .get_cell((neighbor_col, row_idx))
+            .map(|cell| cell.get_formatted_value().is_empty())
+            .unwrap_or(true);
+        if !neighbor_is_empty {
+            break;
+        }
+        total_width += *ctx
+            .column_widths
+            .get((neighbor_col - ctx.col_start) as usize)
+            .unwrap_or(&0.0);
+        has_empty_neighbor = true;
+    }
+
+    has_empty_neighbor.then_some(total_width)
+}
+
 /// Build TableRows for a range of rows in a sheet.
 pub(super) fn build_rows_for_range(
     sheet: &umya_spreadsheet::Worksheet,
@@ -254,6 +358,23 @@ pub(super) fn build_rows_for_range(
                 }]
             };
 
+            let (col_span, row_span) = if let Some(info) = ctx.merge_tops.get(&(col_idx, row_idx)) {
+                (info.col_span, info.row_span)
+            } else {
+                (1, 1)
+            };
+
+            let spill_width: Option<f64> = compute_spill_width(
+                sheet,
+                ctx,
+                col_idx,
+                row_idx,
+                &runs,
+                cell_alignment,
+                col_span,
+                umya_cell,
+            );
+
             let content = if runs.is_empty() {
                 Vec::new()
             } else {
@@ -266,12 +387,6 @@ pub(super) fn build_rows_for_range(
                 })]
             };
 
-            let (col_span, row_span) = if let Some(info) = ctx.merge_tops.get(&(col_idx, row_idx)) {
-                (info.col_span, info.row_span)
-            } else {
-                (1, 1)
-            };
-
             cells.push(TableCell {
                 content,
                 col_span,
@@ -281,6 +396,7 @@ pub(super) fn build_rows_for_range(
                 data_bar,
                 icon_text,
                 icon_color,
+                spill_width,
                 vertical_align: cell_vertical_align,
                 padding: None,
             });
