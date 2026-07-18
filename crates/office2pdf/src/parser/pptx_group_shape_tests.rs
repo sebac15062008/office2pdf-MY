@@ -279,3 +279,27 @@ fn test_group_rotation_orbits_children_and_adds_shape_rotation() {
     // Child's own 30° plus the group's 90°.
     assert!((shape.rotation_deg.unwrap() - 120.0).abs() < 0.01);
 }
+
+#[test]
+fn test_group_scaling_stretches_line_endpoints() {
+    // Hairline axes bake their geometry in child-space points; without
+    // endpoint scaling a 2x group left them as sub-pixel stubs.
+    let child = r#"<p:sp><p:nvSpPr><p:cNvPr id="2" name="L"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x="0" y="500000"/><a:ext cx="1000000" cy="1"/></a:xfrm><a:prstGeom prst="line"><a:avLst/></a:prstGeom><a:ln w="6350"><a:solidFill><a:srgbClr val="000000"/></a:solidFill><a:prstDash val="dashDot"/></a:ln></p:spPr></p:sp>"#;
+    let group = format!(
+        r#"<p:grpSp><p:nvGrpSpPr><p:cNvPr id="10" name="G"/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="2000000" cy="2000000"/><a:chOff x="0" y="0"/><a:chExt cx="1000000" cy="1000000"/></a:xfrm></p:grpSpPr>{child}</p:grpSp>"#
+    );
+    let slide = make_slide_xml(&[group]);
+    let data = build_test_pptx(SLIDE_CX, SLIDE_CY, &[slide]);
+
+    let parser = PptxParser;
+    let (doc, _warnings) = parser.parse(&data, &ConvertOptions::default()).unwrap();
+    let page = first_fixed_page(&doc);
+    let FixedElementKind::Shape(ref shape) = page.elements[0].kind else {
+        panic!("expected shape");
+    };
+    let ShapeKind::Line { x2, .. } = shape.kind else {
+        panic!("expected line, got {:?}", shape.kind);
+    };
+    // Child 1_000_000 EMU wide scaled 2x -> 2_000_000 EMU = 157.48pt.
+    assert!((x2 - 157.48).abs() < 0.1, "x2 {x2}");
+}

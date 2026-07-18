@@ -72,6 +72,26 @@ impl GroupTransform {
             }
         }
 
+        // Line and polyline geometry is baked in child-space points; scale
+        // them with the group, or hairline axes collapse to sub-pixel stubs.
+        if let FixedElementKind::Shape(ref mut shape) = elem.kind {
+            match &mut shape.kind {
+                ShapeKind::Line { x1, y1, x2, y2, .. } => {
+                    *x1 *= scale_x;
+                    *x2 *= scale_x;
+                    *y1 *= scale_y;
+                    *y2 *= scale_y;
+                }
+                ShapeKind::Polyline { points, .. } => {
+                    for (x, y) in points.iter_mut() {
+                        *x *= scale_x;
+                        *y *= scale_y;
+                    }
+                }
+                _ => {}
+            }
+        }
+
         // Compose the group's own rotation: orbit the child's center around
         // the group center and add the angle to the child's own rotation
         // (shape geometry only — images and text boxes carry no rotation).
