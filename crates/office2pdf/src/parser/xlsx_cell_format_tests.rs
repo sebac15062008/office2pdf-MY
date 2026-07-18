@@ -697,3 +697,127 @@ fn test_percent_format_keeps_decimal_precision() {
     };
     assert_eq!(paragraph.runs[0].text, "17.3%");
 }
+
+// ----- In-cell rich text runs (issue #275) -----
+
+/// Helper: build a rich text value like the classified workbook's headings —
+/// a bold label run followed by a plain continuation run.
+fn build_rich_text_cell(setup: impl FnOnce(&mut umya_spreadsheet::Worksheet)) -> Vec<u8> {
+    build_xlsx_formatted(setup)
+}
+
+#[test]
+fn test_rich_text_runs_keep_per_run_formatting() {
+    let data = build_rich_text_cell(|sheet| {
+        let mut rich = umya_spreadsheet::RichText::default();
+
+        let mut bold_run = umya_spreadsheet::TextElement::default();
+        bold_run.set_text("지원율 ");
+        {
+            let font = bold_run.get_run_properties_mut();
+            font.set_bold(true);
+            font.set_size(14.0);
+            font.get_color_mut().set_argb("FFC00000");
+            font.set_name("Arial");
+        }
+        rich.add_rich_text_elements(bold_run);
+
+        let mut plain_run = umya_spreadsheet::TextElement::default();
+        plain_run.set_text("(최근 3년)");
+        rich.add_rich_text_elements(plain_run);
+
+        sheet
+            .get_cell_mut("A1")
+            .get_cell_value_mut()
+            .set_rich_text(rich);
+    });
+    let parser = XlsxParser;
+    let (doc, _warnings) = parser.parse(&data, &ConvertOptions::default()).unwrap();
+
+    let tp = get_sheet_page(&doc, 0);
+    let Block::Paragraph(paragraph) = &tp.table.rows[0].cells[0].content[0] else {
+        panic!("expected paragraph");
+    };
+    assert_eq!(
+        paragraph.runs.len(),
+        2,
+        "each rich text run must become its own IR run"
+    );
+
+    let bold_run = &paragraph.runs[0];
+    assert_eq!(bold_run.text, "지원율 ");
+    assert_eq!(bold_run.style.bold, Some(true));
+    assert_eq!(bold_run.style.font_size, Some(14.0));
+    assert_eq!(bold_run.style.font_family.as_deref(), Some("Arial"));
+    assert_eq!(
+        bold_run.style.color,
+        Some(Color {
+            r: 0xC0,
+            g: 0x00,
+            b: 0x00
+        })
+    );
+
+    let plain_run = &paragraph.runs[1];
+    assert_eq!(plain_run.text, "(최근 3년)");
+    assert_eq!(plain_run.style.bold, None, "unstyled run stays regular");
+    assert_eq!(plain_run.style.font_size, None);
+}
+
+#[test]
+fn test_rich_text_unstyled_run_inherits_cell_style() {
+    // Cell-level style is 12pt green italic; a rich run without its own
+    // properties must inherit it, while a styled run overrides per-property.
+    let data = build_rich_text_cell(|sheet| {
+        let mut rich = umya_spreadsheet::RichText::default();
+
+        let mut styled_run = umya_spreadsheet::TextElement::default();
+        styled_run.set_text("34.8%");
+        // Excel writes minimal <rPr> with only the changed property — build the
+        // font from empty instead of get_run_properties_mut(), which seeds the
+        // library's full default font (explicit sz=11/Calibri).
+        let mut bold_only_font = umya_spreadsheet::Font::default();
+        bold_only_font.set_bold(true);
+        styled_run.set_run_properties(bold_only_font);
+        rich.add_rich_text_elements(styled_run);
+
+        let mut plain_run = umya_spreadsheet::TextElement::default();
+        plain_run.set_text(" 달성");
+        rich.add_rich_text_elements(plain_run);
+
+        let cell = sheet.get_cell_mut("B2");
+        cell.get_cell_value_mut().set_rich_text(rich);
+        let font = cell.get_style_mut().get_font_mut();
+        font.set_size(12.0);
+        font.set_italic(true);
+    });
+    let parser = XlsxParser;
+    let (doc, _warnings) = parser.parse(&data, &ConvertOptions::default()).unwrap();
+
+    let tp = get_sheet_page(&doc, 0);
+    let cell = tp
+        .table
+        .rows
+        .iter()
+        .flat_map(|r| r.cells.iter())
+        .find(|c| !c.content.is_empty())
+        .expect("cell with content");
+    let Block::Paragraph(paragraph) = &cell.content[0] else {
+        panic!("expected paragraph");
+    };
+    assert_eq!(paragraph.runs.len(), 2);
+
+    let styled_run = &paragraph.runs[0];
+    assert_eq!(styled_run.style.bold, Some(true));
+    assert_eq!(
+        styled_run.style.font_size,
+        Some(12.0),
+        "run without explicit size keeps the cell size"
+    );
+    assert_eq!(styled_run.style.italic, Some(true));
+
+    let plain_run = &paragraph.runs[1];
+    assert_eq!(plain_run.style.font_size, Some(12.0));
+    assert_eq!(plain_run.style.italic, Some(true));
+    assert_eq!(plain_run.style.bold, None);
+}
