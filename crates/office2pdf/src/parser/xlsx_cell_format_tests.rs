@@ -1050,3 +1050,107 @@ fn test_wrapping_row_with_custom_height_stays_fixed() {
     let tp = get_sheet_page(&doc, 0);
     assert_eq!(tp.table.rows[0].height, Some(30.0));
 }
+
+// ----- Print titles (issue #234) -----
+
+/// Helper: build a workbook whose sheet declares `_xlnm.Print_Titles`.
+fn build_xlsx_with_print_titles(
+    address: &str,
+    setup: impl FnOnce(&mut umya_spreadsheet::Worksheet),
+) -> Vec<u8> {
+    build_xlsx_formatted(|sheet| {
+        setup(sheet);
+        sheet
+            .add_defined_name("_xlnm.Print_Titles", address)
+            .unwrap();
+    })
+}
+
+#[test]
+fn test_print_title_rows_become_repeating_header() {
+    let data = build_xlsx_with_print_titles("Sheet1!$1:$2", |sheet| {
+        sheet.get_cell_mut("A1").set_value("제목 1");
+        sheet.get_cell_mut("A2").set_value("제목 2");
+        sheet.get_cell_mut("A3").set_value("데이터");
+    });
+    let parser = XlsxParser;
+    let (doc, _warnings) = parser.parse(&data, &ConvertOptions::default()).unwrap();
+    let tp = get_sheet_page(&doc, 0);
+    assert_eq!(
+        tp.table.header_row_count, 2,
+        "title rows $1:$2 must repeat as the table header"
+    );
+}
+
+#[test]
+fn test_no_print_titles_means_no_header() {
+    let data = build_xlsx_formatted(|sheet| {
+        sheet.get_cell_mut("A1").set_value("데이터");
+    });
+    let parser = XlsxParser;
+    let (doc, _warnings) = parser.parse(&data, &ConvertOptions::default()).unwrap();
+    let tp = get_sheet_page(&doc, 0);
+    assert_eq!(tp.table.header_row_count, 0);
+}
+
+#[test]
+fn test_print_title_columns_repeat_on_overflow_pages() {
+    // Column A is a title column; enough wide columns follow to force
+    // column pagination. Every overflow page must start with column A.
+    let data = build_xlsx_with_print_titles("Sheet1!$A:$A", |sheet| {
+        sheet.get_cell_mut("A1").set_value("이름");
+        for col in 2..=12u32 {
+            let cell = sheet.get_cell_mut((col, 1));
+            cell.set_value(format!("값{col}"));
+        }
+        for col in 1..=12u32 {
+            sheet
+                .get_column_dimension_by_number_mut(&col)
+                .set_width(30.0);
+        }
+    });
+    let parser = XlsxParser;
+    let (doc, _warnings) = parser.parse(&data, &ConvertOptions::default()).unwrap();
+    assert!(doc.pages.len() >= 2, "wide sheet must paginate by columns");
+
+    for (page_idx, page) in doc.pages.iter().enumerate().skip(1) {
+        let Page::Sheet(sp) = page else {
+            panic!("expected sheet page");
+        };
+        let first_cell_text = cell_text(&sp.table.rows[0].cells[0]);
+        assert_eq!(
+            first_cell_text, "이름",
+            "page {page_idx} must repeat the title column"
+        );
+    }
+}
+
+#[test]
+fn test_print_titles_with_both_rows_and_columns() {
+    // Mirrors `Sheet4!$A:$B,Sheet4!$2:$3`-style definitions with two parts.
+    let data = build_xlsx_with_print_titles("Sheet1!$A:$A,Sheet1!$1:$1", |sheet| {
+        sheet.get_cell_mut("A1").set_value("이름");
+        for col in 2..=12u32 {
+            sheet.get_cell_mut((col, 1)).set_value(format!("값{col}"));
+        }
+        sheet.get_cell_mut("A2").set_value("둘째");
+        for col in 1..=12u32 {
+            sheet
+                .get_column_dimension_by_number_mut(&col)
+                .set_width(30.0);
+        }
+    });
+    let parser = XlsxParser;
+    let (doc, _warnings) = parser.parse(&data, &ConvertOptions::default()).unwrap();
+    let tp = get_sheet_page(&doc, 0);
+    assert_eq!(tp.table.header_row_count, 1, "row titles parsed");
+    assert!(doc.pages.len() >= 2);
+    let Page::Sheet(sp) = &doc.pages[1] else {
+        panic!("expected sheet page");
+    };
+    assert_eq!(
+        cell_text(&sp.table.rows[0].cells[0]),
+        "이름",
+        "column titles parsed from the multi-part address"
+    );
+}

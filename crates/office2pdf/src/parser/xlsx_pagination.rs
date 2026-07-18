@@ -13,15 +13,30 @@ use crate::ir::{SheetPage, Table, TableCell, TableRow};
 const MAX_COLUMN_GROUPS: usize = 12;
 
 /// Split a sheet page into column groups that each fit the printable width.
-/// Returns the page unchanged when everything fits.
-pub(super) fn split_sheet_page_by_width(page: SheetPage) -> Vec<SheetPage> {
+/// Returns the page unchanged when everything fits. `title_columns` is the
+/// 0-based inclusive-exclusive range of print-title columns (from
+/// `_xlnm.Print_Titles`) repeated at the left of every overflow page.
+pub(super) fn split_sheet_page_by_width(
+    page: SheetPage,
+    title_columns: Option<(usize, usize)>,
+) -> Vec<SheetPage> {
     let printable_width: f64 = page.size.width - page.margins.left - page.margins.right;
     let total_width: f64 = page.table.column_widths.iter().sum();
     if total_width <= printable_width || page.table.column_widths.len() <= 1 {
         return vec![page];
     }
 
-    let mut groups: Vec<(usize, usize)> = column_groups(&page.table.column_widths, printable_width);
+    let title_columns: Option<(usize, usize)> = title_columns
+        .map(|(start, end)| (start, end.min(page.table.column_widths.len())))
+        .filter(|(start, end)| start < end);
+    // Reserve the repeated title width so overflow groups still fit the page.
+    let title_width: f64 = title_columns
+        .map(|(start, end)| page.table.column_widths[start..end].iter().sum())
+        .unwrap_or(0.0);
+    let packing_width: f64 = (printable_width - title_width)
+        .max(page.table.column_widths.iter().cloned().fold(0.0, f64::max));
+
+    let mut groups: Vec<(usize, usize)> = column_groups(&page.table.column_widths, packing_width);
     if groups.len() <= 1 {
         return vec![page];
     }
@@ -33,9 +48,18 @@ pub(super) fn split_sheet_page_by_width(page: SheetPage) -> Vec<SheetPage> {
         }
     }
 
+    let title_table: Option<Table> =
+        title_columns.map(|(start, end)| slice_table_columns(&page.table, start, end));
+
     let mut result: Vec<SheetPage> = Vec::with_capacity(groups.len());
     for (index, &(start, end)) in groups.iter().enumerate() {
-        let table: Table = slice_table_columns(&page.table, start, end);
+        let mut table: Table = slice_table_columns(&page.table, start, end);
+        // Excel repeats title columns on pages that no longer show them.
+        if let (Some(title_table), Some((title_start, _))) = (title_table.as_ref(), title_columns)
+            && start > title_start
+        {
+            table = prepend_title_columns(title_table, table);
+        }
         result.push(SheetPage {
             name: page.name.clone(),
             size: page.size,
@@ -52,6 +76,32 @@ pub(super) fn split_sheet_page_by_width(page: SheetPage) -> Vec<SheetPage> {
         });
     }
     result
+}
+
+/// Concatenate the repeated title columns before a column group's table.
+fn prepend_title_columns(title_table: &Table, group_table: Table) -> Table {
+    let mut column_widths: Vec<f64> = title_table.column_widths.clone();
+    column_widths.extend(group_table.column_widths.iter().copied());
+
+    let rows: Vec<TableRow> = title_table
+        .rows
+        .iter()
+        .zip(group_table.rows)
+        .map(|(title_row, group_row)| {
+            let mut cells: Vec<TableCell> = title_row.cells.clone();
+            cells.extend(group_row.cells);
+            TableRow {
+                cells,
+                height: group_row.height,
+            }
+        })
+        .collect();
+
+    Table {
+        rows,
+        column_widths,
+        ..group_table
+    }
 }
 
 /// Greedily pack columns left-to-right into groups whose summed width fits
