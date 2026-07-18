@@ -10,9 +10,10 @@ mod common;
 use std::path::PathBuf;
 
 use office2pdf::config::ConvertOptions;
-use office2pdf::ir::{Block, Page, SheetPage};
+use office2pdf::ir::{Alignment, Block, BorderLineStyle, Page, SheetPage, TableCell};
 use office2pdf::parser::Parser;
 use office2pdf::parser::xlsx::XlsxParser;
+use office2pdf::render::typst_gen::generate_typst;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -100,6 +101,140 @@ fn has_formatted_text(pages: &[SheetPage]) -> bool {
             })
         })
     })
+}
+
+fn table_cell_text(cell: &TableCell) -> String {
+    cell.content
+        .iter()
+        .filter_map(|block| match block {
+            Block::Paragraph(paragraph) => Some(
+                paragraph
+                    .runs
+                    .iter()
+                    .map(|run| run.text.as_str())
+                    .collect::<String>(),
+            ),
+            _ => None,
+        })
+        .collect()
+}
+
+fn sheet_page_named<'a>(pages: &'a [SheetPage], name: &str) -> &'a SheetPage {
+    pages
+        .iter()
+        .find(|page| page.name == name)
+        .unwrap_or_else(|| {
+            let available = pages
+                .iter()
+                .map(|page| page.name.as_str())
+                .collect::<Vec<_>>();
+            panic!("missing sheet page {name}; available pages: {available:?}")
+        })
+}
+
+// ---------------------------------------------------------------------------
+// PR #186 contributor acceptance fixture
+// ---------------------------------------------------------------------------
+
+const PR_186_FIXTURE: &str = "pr_186_contributor_acceptance.xlsx";
+
+#[test]
+fn smoke_pr_186_contributor_acceptance_fixture() {
+    assert_produces_valid_pdf(PR_186_FIXTURE);
+}
+
+#[test]
+fn structure_pr_186_contributor_acceptance_supported_behavior() {
+    let pages = sheet_pages(PR_186_FIXTURE);
+    let statement = sheet_page_named(&pages, "Statement Landscape");
+    let executive = sheet_page_named(&pages, "Executive Portrait");
+
+    assert_eq!(statement.table.rows.len(), 4);
+    assert_eq!(statement.table.column_widths.len(), 4);
+    assert!(
+        (statement.table.column_widths[1] - 108.75).abs() < 0.01,
+        "20 Excel character units should convert to 108.75pt"
+    );
+
+    let alignment_row = &statement.table.rows[1];
+    let expected_alignments = [
+        Alignment::Left,
+        Alignment::Center,
+        Alignment::Right,
+        Alignment::Justify,
+    ];
+    for (column, expected) in expected_alignments.into_iter().enumerate() {
+        let paragraph = match &alignment_row.cells[column].content[0] {
+            Block::Paragraph(paragraph) => paragraph,
+            _ => panic!("alignment cell should contain a paragraph"),
+        };
+        assert_eq!(paragraph.style.alignment, Some(expected));
+    }
+
+    assert!(
+        !table_cell_text(&statement.table.rows[2].cells[1]).is_empty(),
+        "the text-valued General cell should be retained"
+    );
+    let top_border = statement.table.rows[3].cells[0]
+        .border
+        .as_ref()
+        .and_then(|border| border.top.as_ref())
+        .expect("A4 should have a top border");
+    assert_eq!(top_border.style, BorderLineStyle::Double);
+
+    assert!((statement.margins.top - 28.8).abs() < 0.01);
+    assert!((statement.margins.bottom - 36.0).abs() < 0.01);
+    assert!((statement.margins.left - 21.6).abs() < 0.01);
+    assert!((statement.margins.right - 43.2).abs() < 0.01);
+    assert!((executive.margins.top - 54.0).abs() < 0.01);
+    assert!((executive.margins.bottom - 54.0).abs() < 0.01);
+    assert!((executive.margins.left - 50.4).abs() < 0.01);
+    assert!((executive.margins.right - 50.4).abs() < 0.01);
+}
+
+#[test]
+#[ignore = "pending PR #186 adaptation: General numeric cells should align right"]
+fn acceptance_pr_186_contributor_acceptance_numeric_general_alignment() {
+    let pages = sheet_pages(PR_186_FIXTURE);
+    let statement = sheet_page_named(&pages, "Statement Landscape");
+    let general_row = &statement.table.rows[2];
+
+    let numeric = match &general_row.cells[0].content[0] {
+        Block::Paragraph(paragraph) => paragraph,
+        _ => panic!("numeric cell should contain a paragraph"),
+    };
+    let numeric_looking_text = match &general_row.cells[1].content[0] {
+        Block::Paragraph(paragraph) => paragraph,
+        _ => panic!("text cell should contain a paragraph"),
+    };
+    assert_eq!(numeric.style.alignment, Some(Alignment::Right));
+    assert_eq!(numeric_looking_text.style.alignment, None);
+}
+
+#[test]
+#[ignore = "pending PR #186 adaptation: preserve worksheet paper size and orientation"]
+fn acceptance_pr_186_contributor_acceptance_page_setup() {
+    let pages = sheet_pages(PR_186_FIXTURE);
+    let statement = sheet_page_named(&pages, "Statement Landscape");
+    let executive = sheet_page_named(&pages, "Executive Portrait");
+
+    assert!((statement.size.width - 612.0).abs() < 0.01);
+    assert!((statement.size.height - 396.0).abs() < 0.01);
+    assert!((executive.size.width - 522.0).abs() < 0.01);
+    assert!((executive.size.height - 756.0).abs() < 0.01);
+}
+
+#[test]
+#[ignore = "pending PR #186 adaptation: render Double as a 2.5x solid stroke"]
+fn acceptance_pr_186_contributor_acceptance_double_border_rendering() {
+    let data = load_fixture(PR_186_FIXTURE);
+    let (document, _warnings) = XlsxParser
+        .parse(&data, &ConvertOptions::default())
+        .expect("fixture should parse");
+    let output = generate_typst(&document).expect("fixture should generate Typst");
+
+    assert!(!output.source.contains("dash: \"dashed\""));
+    assert!(output.source.contains("2.5pt + rgb(0, 0, 0)"));
 }
 
 // ---------------------------------------------------------------------------
