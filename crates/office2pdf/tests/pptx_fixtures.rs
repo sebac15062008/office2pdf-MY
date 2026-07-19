@@ -128,7 +128,6 @@ fn smoke_pr_188_contributor_acceptance_fixtures() {
 }
 
 #[test]
-#[ignore = "pending PR #188 adaptation: reset a slide without a background to white"]
 fn acceptance_pr_188_contributor_acceptance_page_fill_reset() {
     let data = load_fixture(PR_188_PAGE_FILL_FIXTURE);
     let (document, _warnings) = PptxParser
