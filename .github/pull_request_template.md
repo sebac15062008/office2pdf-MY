@@ -27,6 +27,7 @@
 - Page(s): <!-- compared page numbers -->
 - Renderer and DPI: <!-- e.g. pdftoppm, 150 DPI -->
 - Evidence mode: `fix` <!-- `fix` requires gt/before/after; `defect` requires compare -->
+- New follow-up issues found in this audit: <!-- #N, #N or None; create issues before completing the audit -->
 - GT: `assets/bugfixes/issue-<!-- N -->/gt.jpg`
 - Before: `assets/bugfixes/issue-<!-- N -->/before.jpg`
 - After: `assets/bugfixes/issue-<!-- N -->/after.jpg`

@@ -141,6 +141,22 @@ def validate_pr_body(body: str, changed_paths: list[str]) -> list[str]:
             if field(audit, field_name) != expected_path:
                 errors.append(f"Visual audit > {field_name} must be `{expected_path}`.")
 
+    follow_up_value = field(audit, "New follow-up issues found in this audit")
+    if not follow_up_value:
+        errors.append("Visual audit must summarize newly discovered follow-up issues or say None.")
+    elif follow_up_value != "None":
+        follow_up_issues = {int(number) for number in re.findall(r"#(\d+)", follow_up_value)}
+        if not follow_up_issues:
+            errors.append("New follow-up issues must use issue references such as #123, or None.")
+        else:
+            remaining_issues = remaining_issue_numbers(body)
+            unclassified = follow_up_issues - remaining_issues
+            if unclassified:
+                references = ", ".join(f"#{number}" for number in sorted(unclassified))
+                errors.append(
+                    f"New follow-up issues must also classify a Remaining deviation: {references}."
+                )
+
     for item in INSPECTION_ITEMS:
         if not checked(audit, item):
             errors.append(f"Required visual inspection is not checked: {item}.")
