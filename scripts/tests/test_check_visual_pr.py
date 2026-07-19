@@ -1,4 +1,5 @@
 import io
+import re
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -19,6 +20,10 @@ ROOT = Path(__file__).resolve().parents[2]
 def visual_body(result_overrides=None):
     results = {row: "Matches GT" for row in AUDIT_ROWS}
     results.update(result_overrides or {})
+    follow_ups = sorted(
+        {number for result in results.values() for number in re.findall(r"#\d+", result)}
+    )
+    follow_up_value = ", ".join(follow_ups) if follow_ups else "None"
     inspections = "\n".join(f"- [x] {item}" for item in INSPECTION_ITEMS)
     rows = "\n".join(f"| {row} | {results[row]} |" for row in AUDIT_ROWS)
     return f"""## Visual impact
@@ -34,6 +39,7 @@ def visual_body(result_overrides=None):
 - Page(s): 1
 - Renderer and DPI: pdftoppm, 150 DPI
 - Evidence mode: `fix`
+- New follow-up issues found in this audit: {follow_up_value}
 - GT: `assets/bugfixes/issue-186/gt.jpg`
 - Before: `assets/bugfixes/issue-186/before.jpg`
 - After: `assets/bugfixes/issue-186/after.jpg`
@@ -73,6 +79,14 @@ class PullRequestBodyTests(unittest.TestCase):
             ["assets/bugfixes/issue-186/after.jpg"],
         )
         self.assertTrue(any("Remaining deviation must reference an issue" in error for error in errors))
+
+    def test_new_follow_up_must_classify_a_remaining_deviation(self):
+        body = visual_body().replace(
+            "New follow-up issues found in this audit: None",
+            "New follow-up issues found in this audit: #328",
+        )
+        errors = validate_pr_body(body, ["assets/bugfixes/issue-186/after.jpg"])
+        self.assertTrue(any("must also classify a Remaining deviation" in error for error in errors))
 
     def test_visual_assets_cannot_be_marked_non_visual(self):
         body = """## Visual impact
