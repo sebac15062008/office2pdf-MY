@@ -115,7 +115,7 @@ fn anchored_image(
                 .copied()
                 .unwrap_or(0.0)
         } else {
-            column_width_to_pt(DEFAULT_COLUMN_WIDTH)
+            column_width_to_pt(DEFAULT_COLUMN_WIDTH, ctx.max_digit_width_px)
         }
     };
     let row_height_at = |row_zero_based: u32| -> f64 {
@@ -172,6 +172,7 @@ fn empty_sheet_context() -> SheetContext {
         col_end: 0,
         num_cols: 0,
         column_widths: Vec::new(),
+        max_digit_width_px: 7.0,
         merge_tops: std::collections::HashMap::new(),
         merge_skips: std::collections::HashSet::new(),
         cond_fmt_overrides: std::collections::HashMap::new(),

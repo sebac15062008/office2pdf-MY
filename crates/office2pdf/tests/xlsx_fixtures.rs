@@ -147,24 +147,36 @@ fn smoke_pr_186_contributor_acceptance_fixture() {
 fn structure_pr_186_contributor_acceptance_supported_behavior() {
     let pages = sheet_pages(PR_186_FIXTURE);
     let statement = sheet_page_named(&pages, "Statement Landscape");
+    let statement_pages = pages
+        .iter()
+        .filter(|page| page.name == "Statement Landscape")
+        .collect::<Vec<_>>();
     let executive = sheet_page_named(&pages, "Executive Portrait");
 
     assert_eq!(statement.table.rows.len(), 4);
-    assert_eq!(statement.table.column_widths.len(), 4);
+    assert_eq!(
+        statement_pages
+            .iter()
+            .map(|page| page.table.column_widths.len())
+            .sum::<usize>(),
+        4
+    );
     assert!(
-        (statement.table.column_widths[1] - 108.75).abs() < 0.01,
-        "20 Excel character units should convert to 108.75pt"
+        (statement.table.column_widths[1] - 120.0).abs() < 0.01,
+        "20 Carlito character units should convert to 120pt"
     );
 
-    let alignment_row = &statement.table.rows[1];
     let expected_alignments = [
         Alignment::Left,
         Alignment::Center,
         Alignment::Right,
         Alignment::Justify,
     ];
-    for (column, expected) in expected_alignments.into_iter().enumerate() {
-        let paragraph = match &alignment_row.cells[column].content[0] {
+    let alignment_cells = statement_pages
+        .iter()
+        .flat_map(|page| page.table.rows[1].cells.iter());
+    for (cell, expected) in alignment_cells.zip(expected_alignments) {
+        let paragraph = match &cell.content[0] {
             Block::Paragraph(paragraph) => paragraph,
             _ => panic!("alignment cell should contain a paragraph"),
         };
@@ -259,6 +271,34 @@ fn acceptance_pr_186_contributor_acceptance_page_setup() {
     assert!((statement.size.height - 396.0).abs() < 0.01);
     assert!((executive.size.width - 522.0).abs() < 0.01);
     assert!((executive.size.height - 756.0).abs() < 0.01);
+}
+
+#[test]
+fn acceptance_pr_186_contributor_acceptance_print_pagination() {
+    let pages = sheet_pages(PR_186_FIXTURE);
+    let statement_pages = pages
+        .iter()
+        .filter(|page| page.name == "Statement Landscape")
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        statement_pages.len(),
+        2,
+        "the four statement columns should print as two horizontal pages"
+    );
+    assert_eq!(
+        statement_pages[0].table.column_widths,
+        [156.0, 120.0, 144.0]
+    );
+    assert_eq!(statement_pages[1].table.column_widths, [144.0]);
+    assert_eq!(
+        table_cell_text(&statement_pages[0].table.rows[0].cells[2]),
+        "Explicit Right"
+    );
+    assert_eq!(
+        table_cell_text(&statement_pages[1].table.rows[0].cells[0]),
+        "Explicit Justify"
+    );
 }
 
 #[test]

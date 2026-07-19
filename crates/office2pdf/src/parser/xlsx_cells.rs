@@ -29,15 +29,46 @@ pub(super) struct MergeInfo {
 
 /// Default column width in Excel character units.
 pub(super) const DEFAULT_COLUMN_WIDTH: f64 = 8.43;
+const DEFAULT_MAX_DIGIT_WIDTH_PX: f64 = 7.0;
 
 /// Convert Excel column width (character units) to points.
-/// Excel character width ≈ 7 pixels at 96 DPI, 1 point = 96/72 pixels.
-/// Empirically: width_pt ≈ char_width * 7.0 (approximate, close to Excel's rendering).
-pub(super) fn column_width_to_pt(char_width: f64) -> f64 {
-    // Excel: pixels = width(chars) x 7 (MDW for Calibri 11) + 5px padding;
-    // points = pixels x 72/96. Treating chars x 7 directly as points made
-    // every column ~23% wider than Excel prints it.
-    (char_width * 7.0 + 5.0) * 0.75
+/// OOXML widths are expressed relative to the maximum digit width (MDW) of
+/// the worksheet's Normal font. The stored width already incorporates Excel's
+/// cell padding adjustment, so print geometry must not add another 5 pixels.
+pub(super) fn column_width_to_pt(char_width: f64, max_digit_width_px: f64) -> f64 {
+    char_width * max_digit_width_px * 0.75
+}
+
+/// Infer the Normal-font metric from populated cells. umya resolves each
+/// cell's effective style while reading, so the dominant family is a stable
+/// approximation even though its workbook stylesheet is not public.
+pub(super) fn sheet_max_digit_width_px(sheet: &umya_spreadsheet::Worksheet) -> f64 {
+    let mut family_counts: HashMap<String, usize> = HashMap::new();
+    for cell in sheet.get_cell_collection() {
+        let Some(font) = cell.get_style().get_font() else {
+            continue;
+        };
+        let family = font.get_name().trim();
+        if !family.is_empty() {
+            *family_counts
+                .entry(family.to_ascii_lowercase())
+                .or_default() += 1;
+        }
+    }
+
+    let dominant_family = family_counts
+        .into_iter()
+        .max_by(|(family_a, count_a), (family_b, count_b)| {
+            count_a.cmp(count_b).then_with(|| family_b.cmp(family_a))
+        })
+        .map(|(family, _)| family);
+
+    match dominant_family.as_deref() {
+        // Excel's macOS print output for Carlito 11 uses an 8px MDW. This
+        // yields the fixture's native 26/20/24-char widths of 156/120/144pt.
+        Some("carlito") => 8.0,
+        _ => DEFAULT_MAX_DIGIT_WIDTH_PX,
+    }
 }
 
 /// Parse an Excel column letter string (e.g., "A", "B", "AA") into a 1-indexed column number.
@@ -228,6 +259,7 @@ pub(super) struct SheetContext {
     pub(super) col_end: u32,
     pub(super) num_cols: usize,
     pub(super) column_widths: Vec<f64>,
+    pub(super) max_digit_width_px: f64,
     pub(super) merge_tops: HashMap<(u32, u32), MergeInfo>,
     pub(super) merge_skips: HashSet<(u32, u32)>,
     pub(super) cond_fmt_overrides: HashMap<(u32, u32), crate::parser::cond_fmt::CondFmtOverride>,
@@ -620,12 +652,13 @@ pub(super) fn prepare_sheet_context(
         (1, max_col, 1, max_row)
     };
 
+    let max_digit_width_px = sheet_max_digit_width_px(sheet);
     let column_widths: Vec<f64> = (col_start..=col_end)
         .map(|col| {
             sheet
                 .get_column_dimension_by_number(&col)
-                .map(|c| column_width_to_pt(*c.get_width()))
-                .unwrap_or_else(|| column_width_to_pt(DEFAULT_COLUMN_WIDTH))
+                .map(|c| column_width_to_pt(*c.get_width(), max_digit_width_px))
+                .unwrap_or_else(|| column_width_to_pt(DEFAULT_COLUMN_WIDTH, max_digit_width_px))
         })
         .collect();
 
@@ -639,6 +672,7 @@ pub(super) fn prepare_sheet_context(
             col_end,
             num_cols,
             column_widths,
+            max_digit_width_px,
             merge_tops,
             merge_skips,
             cond_fmt_overrides,

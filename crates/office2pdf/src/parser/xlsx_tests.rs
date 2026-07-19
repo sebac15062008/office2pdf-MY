@@ -187,13 +187,41 @@ fn test_column_widths_default() {
 
     let tp = get_sheet_page(&doc, 0);
     assert_eq!(tp.table.column_widths.len(), 2);
-    // Default column width: 8.43 chars -> 64px -> 48pt (Excel's formula).
+    // Print geometry uses the stored character width and the default 7px MDW
+    // without adding screen-only cell padding a second time.
     for w in &tp.table.column_widths {
         assert!(
-            *w > 44.0 && *w < 52.0,
-            "Expected default width around 48pt, got {w}"
+            *w > 43.5 && *w < 44.5,
+            "Expected default print width around 44pt, got {w}"
         );
     }
+}
+
+#[test]
+fn test_carlito_column_widths_match_native_print_metrics() {
+    assert_eq!(column_width_to_pt(26.0, 8.0), 156.0);
+    assert_eq!(column_width_to_pt(20.0, 8.0), 120.0);
+    assert_eq!(column_width_to_pt(24.0, 8.0), 144.0);
+}
+
+#[test]
+fn test_sheet_uses_dominant_carlito_font_for_column_metrics() {
+    let mut book = umya_spreadsheet::new_file();
+    let sheet = book.get_sheet_mut(&0).unwrap();
+    sheet
+        .get_cell_mut("A1")
+        .set_value("Header")
+        .get_style_mut()
+        .get_font_mut()
+        .set_name("Carlito");
+    sheet
+        .get_cell_mut("A2")
+        .set_value("Body")
+        .get_style_mut()
+        .get_font_mut()
+        .set_name("Carlito");
+
+    assert_eq!(sheet_max_digit_width_px(sheet), 8.0);
 }
 
 // ----- Page size and margins defaults -----
