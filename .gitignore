@@ -21,3 +21,5 @@ docs/
 # Ralph (local-only automation, never push to remote)
 scripts/ralph/
 .DS_Store
+__pycache__/
+*.py[cod]
