@@ -120,6 +120,7 @@ fn fallback_candidates(font_family: &str, context: Option<&FontSearchContext>) -
 pub fn substitutes(font_family: &str) -> Option<&'static [&'static str]> {
     match normalized_lookup_key(font_family).as_str() {
         "calibri" => Some(&["Carlito", "Liberation Sans"]),
+        "carlito" => Some(&["Calibri", "Liberation Sans", "Arimo", "Arial"]),
         "cambria" => Some(&["Caladea", "Liberation Serif"]),
         "arial" => Some(&["Liberation Sans", "Arimo"]),
         "times new roman" => Some(&["Liberation Serif", "Tinos"]),

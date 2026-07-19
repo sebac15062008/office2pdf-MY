@@ -215,6 +215,23 @@ fn acceptance_pr_186_contributor_acceptance_six_digit_colors() {
 }
 
 #[test]
+fn acceptance_pr_186_contributor_acceptance_carlito_fallback() {
+    let data = load_fixture(PR_186_FIXTURE);
+    let (document, _warnings) = XlsxParser
+        .parse(&data, &ConvertOptions::default())
+        .expect("fixture should parse");
+    let output = generate_typst(&document).expect("fixture should generate Typst");
+
+    assert!(
+        output
+            .source
+            .contains(r#"font: ("Carlito", "Calibri", "Liberation Sans", "Arimo", "Arial")"#),
+        "Carlito should retain a sans-serif fallback chain: {}",
+        output.source
+    );
+}
+
+#[test]
 fn acceptance_pr_186_contributor_acceptance_numeric_general_alignment() {
     let pages = sheet_pages(PR_186_FIXTURE);
     let statement = sheet_page_named(&pages, "Statement Landscape");

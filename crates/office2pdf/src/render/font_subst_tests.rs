@@ -15,6 +15,13 @@ fn test_calibri_substitutes() {
 }
 
 #[test]
+fn test_carlito_substitutes_stay_sans_serif() {
+    let subs = substitutes("Carlito").expect("Carlito should have substitutes");
+    assert_eq!(subs, &["Calibri", "Liberation Sans", "Arimo", "Arial"]);
+    assert!(subs.iter().all(|family| !family.contains("Serif")));
+}
+
+#[test]
 fn test_cambria_substitutes() {
     let subs = substitutes("Cambria").expect("Cambria should have substitutes");
     assert!(subs.contains(&"Caladea"));
@@ -163,6 +170,31 @@ fn test_font_with_fallbacks_known_font() {
     assert_eq!(
         result, r#"("Calibri", "Carlito", "Liberation Sans")"#,
         "Known font should produce Typst array with original + substitutes"
+    );
+}
+
+#[test]
+fn test_carlito_font_with_fallbacks_emits_sans_chain() {
+    let result = font_with_fallbacks("Carlito");
+    assert_eq!(
+        result,
+        r#"("Carlito", "Calibri", "Liberation Sans", "Arimo", "Arial")"#
+    );
+}
+
+#[test]
+fn test_carlito_installed_system_fallback_is_ranked_first() {
+    let context = FontSearchContext::for_test(Vec::new(), &["Arial"], &[], &[]);
+    let result = with_font_search_context(Some(&context), || font_with_fallbacks("Carlito"));
+    let arial_index = result
+        .find("\"Arial\"")
+        .expect("Arial should remain in the fallback list");
+    let calibri_index = result
+        .find("\"Calibri\"")
+        .expect("Calibri should remain in the fallback list");
+    assert!(
+        arial_index < calibri_index,
+        "an installed system sans font should outrank unavailable candidates: {result}"
     );
 }
 
