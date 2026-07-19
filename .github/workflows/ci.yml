@@ -10,6 +10,31 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  visual-pr-contract:
+    name: Visual PR Contract
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Test visual PR validator
+        run: python3 -m unittest discover -s scripts/tests -p 'test_check_visual_pr.py'
+      - name: Validate visual PR contract
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: >-
+          python3 scripts/check_visual_pr.py
+          --event "${GITHUB_EVENT_PATH}"
+          --base "${{ github.event.pull_request.base.sha }}"
+          --head "${{ github.event.pull_request.head.sha }}"
+          --repository "${{ github.repository }}"
+
   check:
     name: Check
     runs-on: ${{ matrix.os }}
