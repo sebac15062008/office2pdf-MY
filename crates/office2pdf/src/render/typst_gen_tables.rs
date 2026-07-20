@@ -87,6 +87,12 @@ fn generate_table_inner(
 
     let mut rowspan_remaining = vec![0usize; num_cols];
     let header_row_count = table.header_row_count.min(table.rows.len());
+    let default_cell_padding = table.default_cell_padding.unwrap_or(Insets {
+        top: 5.0,
+        right: 5.0,
+        bottom: 5.0,
+        left: 5.0,
+    });
 
     if header_row_count > 0 {
         out.push_str("  table.header(\n");
@@ -96,6 +102,7 @@ fn generate_table_inner(
             num_cols,
             &mut rowspan_remaining,
             "    ",
+            default_cell_padding,
             ctx,
         )?;
         out.push_str("  ),\n");
@@ -107,6 +114,7 @@ fn generate_table_inner(
         num_cols,
         &mut rowspan_remaining,
         "  ",
+        default_cell_padding,
         ctx,
     )?;
 
@@ -120,6 +128,7 @@ fn generate_table_rows(
     num_cols: usize,
     rowspan_remaining: &mut [usize],
     indent: &str,
+    default_cell_padding: Insets,
     ctx: &mut GenCtx,
 ) -> Result<(), ConvertError> {
     for row in rows {
@@ -144,7 +153,14 @@ fn generate_table_rows(
 
             let remaining = num_cols - col_pos;
             let clamped_colspan = (cell.col_span as usize).min(remaining).max(1) as u32;
-            generate_table_cell(out, cell, clamped_colspan, indent, ctx)?;
+            generate_table_cell(
+                out,
+                cell,
+                clamped_colspan,
+                indent,
+                default_cell_padding,
+                ctx,
+            )?;
 
             if cell.row_span > 1 {
                 for rs in rowspan_remaining
@@ -174,6 +190,7 @@ fn generate_table_cell(
     cell: &TableCell,
     clamped_colspan: u32,
     indent: &str,
+    default_cell_padding: Insets,
     ctx: &mut GenCtx,
 ) -> Result<(), ConvertError> {
     let needs_cell_fn = clamped_colspan > 1
@@ -191,6 +208,10 @@ fn generate_table_cell(
     } else {
         out.push_str(indent);
         out.push('[');
+    }
+
+    if let Some(border) = &cell.border {
+        write_double_border_overlays(out, border, cell.padding.unwrap_or(default_cell_padding));
     }
 
     if let Some(ref db) = cell.data_bar {
@@ -244,6 +265,114 @@ fn generate_table_cell(
     Ok(())
 }
 
+fn write_double_border_overlays(out: &mut String, border: &CellBorder, padding: Insets) {
+    if let Some(side) = border
+        .top
+        .as_ref()
+        .filter(|side| side.style == BorderLineStyle::Double)
+    {
+        write_horizontal_double_border(out, side, padding, true);
+    }
+    if let Some(side) = border
+        .bottom
+        .as_ref()
+        .filter(|side| side.style == BorderLineStyle::Double)
+    {
+        write_horizontal_double_border(out, side, padding, false);
+    }
+    if let Some(side) = border
+        .left
+        .as_ref()
+        .filter(|side| side.style == BorderLineStyle::Double)
+    {
+        write_vertical_double_border(out, side, padding, true);
+    }
+    if let Some(side) = border
+        .right
+        .as_ref()
+        .filter(|side| side.style == BorderLineStyle::Double)
+    {
+        write_vertical_double_border(out, side, padding, false);
+    }
+}
+
+fn write_horizontal_double_border(
+    out: &mut String,
+    side: &BorderSide,
+    padding: Insets,
+    is_top: bool,
+) {
+    let align = if is_top {
+        "top + left"
+    } else {
+        "bottom + left"
+    };
+    let first_dy = if is_top {
+        -padding.top - side.width
+    } else {
+        padding.bottom - side.width
+    };
+    let second_dy = if is_top {
+        -padding.top + side.width
+    } else {
+        padding.bottom + side.width
+    };
+    let dx = -padding.left;
+    let length_extra = padding.left + padding.right;
+    write_double_border_line(out, align, dx, first_dy, "0deg", length_extra, side);
+    write_double_border_line(out, align, dx, second_dy, "0deg", length_extra, side);
+}
+
+fn write_vertical_double_border(
+    out: &mut String,
+    side: &BorderSide,
+    padding: Insets,
+    is_left: bool,
+) {
+    let align = if is_left { "top + left" } else { "top + right" };
+    let first_dx = if is_left {
+        -padding.left - side.width
+    } else {
+        padding.right - side.width
+    };
+    let second_dx = if is_left {
+        -padding.left + side.width
+    } else {
+        padding.right + side.width
+    };
+    let dy = -padding.top;
+    let length_extra = padding.top + padding.bottom;
+    write_double_border_line(out, align, first_dx, dy, "90deg", length_extra, side);
+    write_double_border_line(out, align, second_dx, dy, "90deg", length_extra, side);
+}
+
+fn write_double_border_line(
+    out: &mut String,
+    align: &str,
+    dx: f64,
+    dy: f64,
+    angle: &str,
+    length_extra: f64,
+    side: &BorderSide,
+) {
+    let _ = write!(
+        out,
+        "#place({align}, dx: {}pt, dy: {}pt, line(length: 100% + {}pt, angle: {angle}, stroke: {}pt + rgb({}, {}, {})))",
+        format_geometry(dx),
+        format_geometry(dy),
+        format_geometry(length_extra),
+        format_geometry(side.width),
+        side.color.r,
+        side.color.g,
+        side.color.b,
+    );
+}
+
+fn format_geometry(value: f64) -> String {
+    let rounded = (value * 1_000.0).round() / 1_000.0;
+    format_f64(if rounded == -0.0 { 0.0 } else { rounded })
+}
+
 fn write_cell_params(out: &mut String, cell: &TableCell, clamped_colspan: u32) {
     let mut first = true;
 
@@ -282,16 +411,24 @@ fn write_cell_params(out: &mut String, cell: &TableCell, clamped_colspan: u32) {
 fn format_cell_stroke(border: &CellBorder) -> String {
     let mut parts = Vec::with_capacity(4);
 
-    if let Some(ref side) = border.top {
+    if let Some(ref side) = border.top
+        && side.style != BorderLineStyle::Double
+    {
         parts.push(format!("top: {}", format_border_side(side)));
     }
-    if let Some(ref side) = border.bottom {
+    if let Some(ref side) = border.bottom
+        && side.style != BorderLineStyle::Double
+    {
         parts.push(format!("bottom: {}", format_border_side(side)));
     }
-    if let Some(ref side) = border.left {
+    if let Some(ref side) = border.left
+        && side.style != BorderLineStyle::Double
+    {
         parts.push(format!("left: {}", format_border_side(side)));
     }
-    if let Some(ref side) = border.right {
+    if let Some(ref side) = border.right
+        && side.style != BorderLineStyle::Double
+    {
         parts.push(format!("right: {}", format_border_side(side)));
     }
 
@@ -311,14 +448,7 @@ fn format_border_side(side: &BorderSide) -> String {
         side.color.b
     );
     match side.style {
-        BorderLineStyle::Solid | BorderLineStyle::None => base,
-        BorderLineStyle::Double => format!(
-            "(paint: rgb({}, {}, {}), thickness: {}pt)",
-            side.color.r,
-            side.color.g,
-            side.color.b,
-            format_f64(side.width * 2.5),
-        ),
+        BorderLineStyle::Solid | BorderLineStyle::Double | BorderLineStyle::None => base,
         _ => format!(
             "(paint: rgb({}, {}, {}), thickness: {}pt, dash: \"{}\")",
             side.color.r,

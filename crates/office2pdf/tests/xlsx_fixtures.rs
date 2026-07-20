@@ -310,11 +310,12 @@ fn acceptance_pr_186_contributor_acceptance_double_border_rendering() {
     let output = generate_typst(&document).expect("fixture should generate Typst");
 
     assert!(!output.source.contains("dash: \"dashed\""));
-    assert!(
-        output
-            .source
-            .contains("(paint: rgb(0, 0, 0), thickness: 2.5pt)")
-    );
+    assert!(output.source.contains(
+        "#place(top + left, dx: -5pt, dy: -6pt, line(length: 100% + 10pt, angle: 0deg, stroke: 1pt + rgb(0, 0, 0)))"
+    ));
+    assert!(output.source.contains(
+        "#place(top + left, dx: -5pt, dy: -4pt, line(length: 100% + 10pt, angle: 0deg, stroke: 1pt + rgb(0, 0, 0)))"
+    ));
 }
 
 // ---------------------------------------------------------------------------

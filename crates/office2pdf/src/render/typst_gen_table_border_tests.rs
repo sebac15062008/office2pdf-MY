@@ -110,6 +110,129 @@ fn test_table_dashed_border_codegen() {
 }
 
 #[test]
+fn test_table_double_borders_render_two_oriented_rules() {
+    let cell = TableCell {
+        content: vec![Block::Paragraph(Paragraph {
+            style: ParagraphStyle::default(),
+            runs: vec![Run {
+                text: "Double".to_string(),
+                style: TextStyle::default(),
+                href: None,
+                footnote: None,
+            }],
+        })],
+        border: Some(CellBorder {
+            top: Some(BorderSide {
+                width: 0.8,
+                color: Color::new(10, 20, 30),
+                style: BorderLineStyle::Double,
+            }),
+            bottom: Some(BorderSide {
+                width: 0.8,
+                color: Color::new(10, 20, 30),
+                style: BorderLineStyle::Double,
+            }),
+            left: Some(BorderSide {
+                width: 0.8,
+                color: Color::new(10, 20, 30),
+                style: BorderLineStyle::Double,
+            }),
+            right: Some(BorderSide {
+                width: 0.8,
+                color: Color::new(10, 20, 30),
+                style: BorderLineStyle::Double,
+            }),
+        }),
+        ..TableCell::default()
+    };
+    let table = Table {
+        rows: vec![
+            TableRow {
+                cells: vec![TableCell::default(), TableCell::default()],
+                height: None,
+            },
+            TableRow {
+                cells: vec![TableCell::default(), cell],
+                height: None,
+            },
+        ],
+        column_widths: vec![50.0, 50.0],
+        ..Table::default()
+    };
+    let doc = make_doc(vec![make_flow_page(vec![Block::Table(table)])]);
+    let output = generate_typst(&doc).unwrap();
+    let result = &output.source;
+
+    assert_eq!(
+        result.matches("stroke: 0.8pt + rgb(10, 20, 30)").count(),
+        8,
+        "each double side should render as two one-width rules: {result}"
+    );
+    assert!(
+        result.contains(
+            "#place(top + left, dx: -5pt, dy: -5.8pt, line(length: 100% + 10pt, angle: 0deg"
+        ),
+        "the outer horizontal rule should sit one width above the cell edge: {result}"
+    );
+    assert!(
+        result.contains(
+            "#place(top + left, dx: -5pt, dy: -4.2pt, line(length: 100% + 10pt, angle: 0deg"
+        ),
+        "the inner horizontal rule should sit one width below the cell edge: {result}"
+    );
+    assert!(
+        result.contains(
+            "#place(top + left, dx: -5.8pt, dy: -5pt, line(length: 100% + 10pt, angle: 90deg"
+        ),
+        "the outer vertical rule should sit one width before the cell edge: {result}"
+    );
+    assert!(
+        result.contains(
+            "#place(top + left, dx: -4.2pt, dy: -5pt, line(length: 100% + 10pt, angle: 90deg"
+        ),
+        "the inner vertical rule should sit one width after the cell edge: {result}"
+    );
+    assert!(
+        result.contains(
+            "#place(bottom + left, dx: -5pt, dy: 4.2pt, line(length: 100% + 10pt, angle: 0deg"
+        ),
+        "the inner bottom rule should sit one width above the cell edge: {result}"
+    );
+    assert!(
+        result.contains(
+            "#place(bottom + left, dx: -5pt, dy: 5.8pt, line(length: 100% + 10pt, angle: 0deg"
+        ),
+        "the outer bottom rule should sit one width below the cell edge: {result}"
+    );
+    assert!(
+        result.contains(
+            "#place(top + right, dx: 4.2pt, dy: -5pt, line(length: 100% + 10pt, angle: 90deg"
+        ),
+        "the inner right rule should sit one width before the cell edge: {result}"
+    );
+    assert!(
+        result.contains(
+            "#place(top + right, dx: 5.8pt, dy: -5pt, line(length: 100% + 10pt, angle: 90deg"
+        ),
+        "the outer right rule should sit one width after the cell edge: {result}"
+    );
+
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let pdf = crate::render::pdf::compile_to_pdf(
+            &output.source,
+            &output.images,
+            None,
+            &[],
+            false,
+            false,
+        )
+        .expect("double-border Typst should compile");
+        assert!(pdf.starts_with(b"%PDF"));
+    }
+}
+
+#[test]
 fn test_shape_dashed_stroke_codegen() {
     let doc = make_doc(vec![make_fixed_page(
         960.0,
