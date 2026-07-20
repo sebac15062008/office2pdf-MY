@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, HashMap};
 
-use crate::ir::{Block, List, ListItem, ListKind, ListLevelStyle, Paragraph};
+use crate::ir::{Block, List, ListItem, ListKind, ListLevelStyle, Paragraph, ParagraphStyle};
 
 /// Numbering info extracted from a paragraph's numPr.
 #[derive(Debug, Clone)]
@@ -12,6 +12,7 @@ pub(super) struct NumInfo {
 #[derive(Debug, Clone)]
 struct ResolvedListLevel {
     style: ListLevelStyle,
+    paragraph_style: ParagraphStyle,
     start: u32,
     has_start_override: bool,
 }
@@ -27,6 +28,7 @@ struct RawListLevel {
     start: u32,
     number_format: String,
     level_text: String,
+    paragraph_style: ParagraphStyle,
     has_start_override: bool,
 }
 
@@ -127,6 +129,7 @@ fn extract_raw_level(level: &docx_rs::Level) -> RawListLevel {
         start: serialize_u32(&level.start).unwrap_or(1),
         number_format: level.format.val.clone(),
         level_text: serialize_string(&level.text).unwrap_or_default(),
+        paragraph_style: super::text::extract_paragraph_style(&level.paragraph_property),
         has_start_override: false,
     }
 }
@@ -168,6 +171,7 @@ fn resolve_numbering(
                     start: start as u32,
                     number_format: "decimal".to_string(),
                     level_text: format!("%{}.", level_index + 1),
+                    paragraph_style: ParagraphStyle::default(),
                     has_start_override: true,
                 });
         }
@@ -195,6 +199,7 @@ fn resolve_numbering(
                         marker_text: None,
                         marker_style: None,
                     },
+                    paragraph_style: level.paragraph_style.clone(),
                     start: level.start,
                     has_start_override: level.has_start_override,
                 },
@@ -280,6 +285,23 @@ fn numbering_series(num_id: usize, numberings: &NumberingMap) -> NumberingSeries
         .get(&num_id)
         .map(|numbering| NumberingSeries::Abstract(numbering.abstract_num_id))
         .unwrap_or(NumberingSeries::Numbering(num_id))
+}
+
+fn apply_numbering_level_indentation(
+    paragraph: &mut Paragraph,
+    level_style: Option<&ParagraphStyle>,
+) {
+    let Some(level_style) = level_style else {
+        return;
+    };
+
+    let style = &mut paragraph.style;
+    style.indent_left = style.indent_left.or(level_style.indent_left);
+    style.indent_right = style.indent_right.or(level_style.indent_right);
+    style.indent_first_line = style.indent_first_line.or(level_style.indent_first_line);
+    if style.tab_stops.is_none() {
+        style.tab_stops = level_style.tab_stops.clone();
+    }
 }
 
 fn finalize_list(numbered_items: Vec<NumberedItem>, numberings: &NumberingMap) -> List {
@@ -369,6 +391,11 @@ pub(super) fn group_into_lists(
                     )));
                 }
                 let is_first_in_block = current_list.is_empty();
+                let mut paragraph = paragraph;
+                apply_numbering_level_indentation(
+                    &mut paragraph,
+                    resolved_level.map(|level| &level.paragraph_style),
+                );
                 let mut item = ListItem {
                     content: vec![paragraph],
                     level: info.level,

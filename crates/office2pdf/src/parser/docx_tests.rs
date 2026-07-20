@@ -207,6 +207,66 @@ fn test_parse_simple_bulleted_list() {
 }
 
 #[test]
+fn test_numbering_level_hanging_indent_applies_to_list_paragraphs() {
+    let abstract_num = docx_rs::AbstractNumbering::new(0).add_level(
+        docx_rs::Level::new(
+            0,
+            docx_rs::Start::new(1),
+            docx_rs::NumberFormat::new("bullet"),
+            docx_rs::LevelText::new("•"),
+            docx_rs::LevelJc::new("left"),
+        )
+        .indent(
+            Some(900),
+            Some(docx_rs::SpecialIndentType::Hanging(300)),
+            None,
+            None,
+        ),
+    );
+    let data = build_docx_with_numbering(
+        vec![abstract_num],
+        vec![docx_rs::Numbering::new(1, 0)],
+        vec![
+            docx_rs::Paragraph::new()
+                .add_run(docx_rs::Run::new().add_text("Indented item"))
+                .numbering(docx_rs::NumberingId::new(1), docx_rs::IndentLevel::new(0)),
+            docx_rs::Paragraph::new()
+                .add_run(docx_rs::Run::new().add_text("Direct override"))
+                .indent(
+                    Some(1200),
+                    Some(docx_rs::SpecialIndentType::Hanging(200)),
+                    None,
+                    None,
+                )
+                .numbering(docx_rs::NumberingId::new(1), docx_rs::IndentLevel::new(0)),
+        ],
+    );
+
+    let parser = DocxParser;
+    let (doc, _warnings) = parser.parse(&data, &ConvertOptions::default()).unwrap();
+    let page = match &doc.pages[0] {
+        Page::Flow(page) => page,
+        _ => panic!("Expected FlowPage"),
+    };
+    let list = page
+        .content
+        .iter()
+        .find_map(|block| match block {
+            Block::List(list) => Some(list),
+            _ => None,
+        })
+        .expect("numbered paragraph should become a list");
+    let style = &list.items[0].content[0].style;
+
+    assert_eq!(style.indent_left, Some(45.0));
+    assert_eq!(style.indent_first_line, Some(-15.0));
+
+    let override_style = &list.items[1].content[0].style;
+    assert_eq!(override_style.indent_left, Some(60.0));
+    assert_eq!(override_style.indent_first_line, Some(-10.0));
+}
+
+#[test]
 fn test_parse_simple_numbered_list() {
     let abstract_num = docx_rs::AbstractNumbering::new(0).add_level(docx_rs::Level::new(
         0,

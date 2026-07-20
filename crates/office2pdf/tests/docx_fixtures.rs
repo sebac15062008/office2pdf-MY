@@ -244,6 +244,14 @@ fn acceptance_pr_187_contributor_acceptance_style_inherited_numbering() {
         item_text,
         vec!["Bullet alpha", "Bullet beta", "Number one", "Number two"]
     );
+
+    for list in lists {
+        for item in &list.items {
+            let style = &item.content[0].style;
+            assert_eq!(style.indent_left, Some(36.0));
+            assert_eq!(style.indent_first_line, Some(-18.0));
+        }
+    }
 }
 
 #[test]

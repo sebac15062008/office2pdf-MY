@@ -584,7 +584,8 @@ fn test_fixed_page_text_box_dash_bullets_use_generic_list_path() {
     )]);
     let output = generate_typst(&doc).unwrap();
 
-    assert!(output.source.contains("#list(marker: ["));
+    assert!(output.source.contains("#list("));
+    assert!(output.source.contains("marker: ["));
     assert!(!output.source.contains("tab_advance_1"));
 }
 

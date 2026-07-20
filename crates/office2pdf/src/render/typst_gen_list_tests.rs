@@ -115,6 +115,81 @@ fn test_generate_numbered_list() {
 }
 
 #[test]
+fn test_generate_numbered_list_preserves_hanging_indent_columns() {
+    use crate::ir::List;
+
+    let list = List {
+        kind: ListKind::Ordered,
+        items: vec![ListItem {
+            content: vec![Paragraph {
+                style: ParagraphStyle {
+                    indent_left: Some(36.0),
+                    indent_first_line: Some(-18.0),
+                    ..ParagraphStyle::default()
+                },
+                runs: vec![Run {
+                    text: "Indented item".to_string(),
+                    style: TextStyle::default(),
+                    href: None,
+                    footnote: None,
+                }],
+            }],
+            level: 0,
+            start_at: Some(1),
+        }],
+        level_styles: BTreeMap::from([(
+            0,
+            ListLevelStyle {
+                kind: ListKind::Ordered,
+                numbering_pattern: Some("1.".to_string()),
+                full_numbering: false,
+                marker_text: None,
+                marker_style: None,
+            },
+        )]),
+    };
+
+    let output = generate_typst(&make_doc(vec![make_flow_page(vec![Block::List(list)])])).unwrap();
+
+    assert!(output.source.contains("indent: 18pt"));
+    assert!(output.source.contains("body-indent: 0pt"));
+    assert!(output.source.contains("#box(width: 18pt"));
+}
+
+#[test]
+fn test_generate_bulleted_list_preserves_nonstandard_hanging_indent_columns() {
+    use crate::ir::List;
+
+    let list = List {
+        kind: ListKind::Unordered,
+        items: vec![ListItem {
+            content: vec![Paragraph {
+                style: ParagraphStyle {
+                    indent_left: Some(45.0),
+                    indent_first_line: Some(-15.0),
+                    ..ParagraphStyle::default()
+                },
+                runs: vec![Run {
+                    text: "Indented item".to_string(),
+                    style: TextStyle::default(),
+                    href: None,
+                    footnote: None,
+                }],
+            }],
+            level: 0,
+            start_at: None,
+        }],
+        level_styles: BTreeMap::new(),
+    };
+
+    let output = generate_typst(&make_doc(vec![make_flow_page(vec![Block::List(list)])])).unwrap();
+
+    assert!(output.source.contains("indent: 30pt"));
+    assert!(output.source.contains("body-indent: 0pt"));
+    assert!(output.source.contains("marker: [#box(width: 15pt"));
+}
+
+#[test]
 fn test_generate_numbered_list_marker_inherits_common_text_font() {
     use crate::ir::List;
 

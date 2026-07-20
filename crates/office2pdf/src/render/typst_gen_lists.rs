@@ -12,6 +12,12 @@ struct EffectiveListStyle<'a> {
     marker_style: Option<&'a TextStyle>,
 }
 
+#[derive(Clone, Copy)]
+struct ListIndentGeometry {
+    marker_origin_pt: f64,
+    marker_width_pt: f64,
+}
+
 fn list_style_for_level<'a>(list: &'a List, level: u32) -> EffectiveListStyle<'a> {
     if let Some(style) = list.level_styles.get(&level) {
         EffectiveListStyle {
@@ -44,15 +50,24 @@ fn write_list_open(
     prefix: &str,
     style: &EffectiveListStyle<'_>,
     fallback_marker_style: Option<&TextStyle>,
+    indent: Option<ListIndentGeometry>,
     start_at: Option<u32>,
 ) {
     let (func, _) = list_funcs(style.kind);
     let _ = write!(out, "{prefix}{func}(");
 
+    if let Some(indent) = indent {
+        let _ = write!(
+            out,
+            "indent: {}pt, body-indent: 0pt, ",
+            format_f64(indent.marker_origin_pt)
+        );
+    }
+
     if style.kind == ListKind::Ordered {
         let marker_style = merge_marker_style(fallback_marker_style, style.marker_style);
-        if marker_style.as_ref().is_some_and(has_text_properties) {
-            write_ordered_list_numbering_function(out, style, marker_style.as_ref());
+        if marker_style.as_ref().is_some_and(has_text_properties) || indent.is_some() {
+            write_ordered_list_numbering_function(out, style, marker_style.as_ref(), indent);
             out.push_str(", ");
         } else if let Some(numbering_pattern) = style.numbering_pattern {
             let _ = write!(
@@ -70,13 +85,20 @@ fn write_list_open(
     } else if style.marker_text.is_some()
         || style.marker_style.is_some()
         || fallback_marker_style.is_some()
+        || indent.is_some()
     {
         let (marker_text, explicit_marker_style) =
             renderable_unordered_marker(style.marker_text.unwrap_or("•"), style.marker_style);
         let marker_style =
             merge_marker_style(fallback_marker_style, explicit_marker_style.as_ref());
         out.push_str("marker: [");
+        if let Some(indent) = indent {
+            write_marker_box_open(out, indent.marker_width_pt);
+        }
         write_unordered_list_marker_content(out, &marker_text, marker_style.as_ref());
+        if indent.is_some() {
+            out.push_str("])");
+        }
         out.push_str("], ");
     }
 
@@ -87,9 +109,13 @@ fn write_ordered_list_numbering_function(
     out: &mut String,
     style: &EffectiveListStyle<'_>,
     marker_style: Option<&TextStyle>,
+    indent: Option<ListIndentGeometry>,
 ) {
     let pattern: &str = style.numbering_pattern.unwrap_or("1.");
     out.push_str("numbering: (..nums) => [");
+    if let Some(indent) = indent {
+        write_marker_box_open(out, indent.marker_width_pt);
+    }
     if let Some(marker_style) = marker_style.filter(|style| has_text_properties(style)) {
         out.push_str("#text(");
         write_text_params(out, marker_style);
@@ -103,7 +129,17 @@ fn write_ordered_list_numbering_function(
     if marker_style.is_some_and(has_text_properties) {
         out.push(']');
     }
+    if indent.is_some() {
+        out.push_str("])");
+    }
     out.push(']');
+}
+
+fn write_marker_box_open(out: &mut String, width_pt: f64) {
+    // Typst normally sizes the marker column from the glyph. Word instead
+    // fixes the body at the numbering level's left indent, so reserve the
+    // complete hanging-indent span even for narrow bullets and digits.
+    let _ = write!(out, "#box(width: {}pt, align(left)[", format_f64(width_pt));
 }
 
 fn write_unordered_list_marker_content(
@@ -127,12 +163,56 @@ fn list_root_level(list: &List) -> u32 {
     list.items.first().map(|item| item.level).unwrap_or(0)
 }
 
+fn paragraph_list_indent(style: &ParagraphStyle) -> Option<ListIndentGeometry> {
+    let indent_left = style.indent_left?.max(0.0);
+    let first_line_indent = style.indent_first_line?;
+    if first_line_indent >= -0.0001 {
+        return None;
+    }
+
+    let marker_origin_pt = (indent_left + first_line_indent).max(0.0);
+    let marker_width_pt = indent_left - marker_origin_pt;
+    (marker_width_pt > 0.0001).then_some(ListIndentGeometry {
+        marker_origin_pt,
+        marker_width_pt,
+    })
+}
+
+fn common_list_level_indent(
+    items: &[crate::ir::ListItem],
+    level: u32,
+) -> Option<ListIndentGeometry> {
+    let mut geometries = items
+        .iter()
+        .filter(|item| item.level == level)
+        .filter_map(|item| item.content.first())
+        .map(|paragraph| paragraph_list_indent(&paragraph.style));
+    let first = geometries.next()??;
+
+    geometries
+        .all(|geometry| {
+            geometry.is_some_and(|geometry| {
+                f64_approx_eq(geometry.marker_origin_pt, first.marker_origin_pt)
+                    && f64_approx_eq(geometry.marker_width_pt, first.marker_width_pt)
+            })
+        })
+        .then_some(first)
+}
+
 pub(super) fn generate_list(out: &mut String, list: &List) -> Result<(), ConvertError> {
     let root_level: u32 = list_root_level(list);
     let style = list_style_for_level(list, root_level);
     let fallback_marker_style = common_list_level_text_style(&list.items, root_level);
+    let indent = common_list_level_indent(&list.items, root_level);
     let start_at = list.items.first().and_then(|item| item.start_at);
-    write_list_open(out, "#", &style, fallback_marker_style.as_ref(), start_at);
+    write_list_open(
+        out,
+        "#",
+        &style,
+        fallback_marker_style.as_ref(),
+        indent,
+        start_at,
+    );
     generate_list_items(out, list, &list.items, root_level)?;
     out.push_str(")\n");
     Ok(())
@@ -910,12 +990,15 @@ fn generate_list_items(
                 let nested_style = list_style_for_level(list, base_level + 1);
                 let fallback_marker_style =
                     common_list_level_text_style(&items[nested_start..nested_end], base_level + 1);
+                let indent =
+                    common_list_level_indent(&items[nested_start..nested_end], base_level + 1);
                 let nested_start_at = items[nested_start].start_at;
                 write_list_open(
                     out,
                     " #",
                     &nested_style,
                     fallback_marker_style.as_ref(),
+                    indent,
                     nested_start_at,
                 );
                 generate_list_items(out, list, &items[nested_start..nested_end], base_level + 1)?;
