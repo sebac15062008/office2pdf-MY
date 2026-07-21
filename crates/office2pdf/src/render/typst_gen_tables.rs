@@ -126,6 +126,7 @@ fn generate_table_inner(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn generate_table_rows(
     out: &mut String,
     rows: &[TableRow],
