@@ -192,7 +192,7 @@ fn test_parse_simple_bulleted_list() {
             kind: ListKind::Unordered,
             numbering_pattern: None,
             full_numbering: false,
-            marker_text: None,
+            marker_text: Some("•".to_string()),
             marker_style: None,
         })
     );
@@ -424,7 +424,7 @@ fn test_parse_nested_multi_level_list() {
             kind: ListKind::Unordered,
             numbering_pattern: None,
             full_numbering: false,
-            marker_text: None,
+            marker_text: Some("◦".to_string()),
             marker_style: None,
         })
     );
@@ -551,7 +551,7 @@ fn test_parse_mixed_ordered_and_bulleted_levels() {
                     kind: ListKind::Unordered,
                     numbering_pattern: None,
                     full_numbering: false,
-                    marker_text: None,
+                    marker_text: Some("•".to_string()),
                     marker_style: None,
                 },
             ),
@@ -1000,5 +1000,62 @@ fn issue_189_footer_preserves_inline_image_and_rtl_text() {
     assert!(
         pdf_text.contains("ةطساوب"),
         "extracted PDF text: {pdf_text:?}"
+    );
+}
+
+#[test]
+fn test_bullet_level_marker_glyph_preserved() {
+    // Word's level-2 bullets use the numbering definition's lvlText glyph
+    // (e.g. ○); dropping it made every level render the level-1 disc
+    // (issue #356).
+    let abstract_num = docx_rs::AbstractNumbering::new(0)
+        .add_level(docx_rs::Level::new(
+            0,
+            docx_rs::Start::new(1),
+            docx_rs::NumberFormat::new("bullet"),
+            docx_rs::LevelText::new("•"),
+            docx_rs::LevelJc::new("left"),
+        ))
+        .add_level(docx_rs::Level::new(
+            1,
+            docx_rs::Start::new(1),
+            docx_rs::NumberFormat::new("bullet"),
+            docx_rs::LevelText::new("○"),
+            docx_rs::LevelJc::new("left"),
+        ));
+    let numbering = docx_rs::Numbering::new(1, 0);
+
+    let data = build_docx_with_numbering(
+        vec![abstract_num],
+        vec![numbering],
+        vec![
+            docx_rs::Paragraph::new()
+                .add_run(docx_rs::Run::new().add_text("level one"))
+                .numbering(docx_rs::NumberingId::new(1), docx_rs::IndentLevel::new(0)),
+            docx_rs::Paragraph::new()
+                .add_run(docx_rs::Run::new().add_text("level two"))
+                .numbering(docx_rs::NumberingId::new(1), docx_rs::IndentLevel::new(1)),
+        ],
+    );
+    let parser = DocxParser;
+    let (doc, _warnings) = parser.parse(&data, &ConvertOptions::default()).unwrap();
+
+    let list = doc
+        .pages
+        .iter()
+        .find_map(|page| match page {
+            Page::Flow(flow) => flow.content.iter().find_map(|block| match block {
+                Block::List(list) => Some(list),
+                _ => None,
+            }),
+            _ => None,
+        })
+        .expect("expected a list block");
+    assert_eq!(
+        list.level_styles
+            .get(&1)
+            .and_then(|style| style.marker_text.as_deref()),
+        Some("○"),
+        "level-2 bullet glyph must come from lvlText"
     );
 }

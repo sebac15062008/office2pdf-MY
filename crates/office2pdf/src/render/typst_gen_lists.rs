@@ -1027,6 +1027,22 @@ fn renderable_unordered_marker(
         }
     }
 
+    // Symbol-font bullets without their font metadata arrive as Unicode
+    // private-use codepoints; map the common Word defaults and fall back to
+    // a disc so no tofu box reaches the page.
+    if normalized_text
+        .chars()
+        .any(|ch| ('\u{E000}'..='\u{F8FF}').contains(&ch))
+    {
+        normalized_text = match normalized_text.chars().next() {
+            Some('\u{F0B7}') => "•".to_string(),
+            Some('\u{F0A7}') => "▪".to_string(),
+            Some('\u{F0D8}') => "➢".to_string(),
+            Some('\u{F076}') => "❖".to_string(),
+            _ => "•".to_string(),
+        };
+    }
+
     (normalized_text, normalized_style)
 }
 
@@ -1138,8 +1154,22 @@ fn generate_list_items(
                 let nested_style = list_style_for_level(list, base_level + 1);
                 let fallback_marker_style =
                     common_list_level_text_style(&items[nested_start..nested_end], base_level + 1);
+                // Word indents are absolute from the margin, but a nested
+                // Typst list is laid out inside the parent item's body:
+                // subtract the parent's text origin so the child marker
+                // lands at its absolute position (issue #356).
+                let parent_indent = common_list_level_indent(&items[i..=i], base_level);
                 let indent =
-                    common_list_level_indent(&items[nested_start..nested_end], base_level + 1);
+                    common_list_level_indent(&items[nested_start..nested_end], base_level + 1).map(
+                        |mut child| {
+                            if let Some(parent) = parent_indent {
+                                child.marker_origin_pt = (child.marker_origin_pt
+                                    - (parent.marker_origin_pt + parent.marker_width_pt))
+                                    .max(0.0);
+                            }
+                            child
+                        },
+                    );
                 let spacing_pt =
                     common_list_level_spacing(&items[nested_start..nested_end], base_level + 1);
                 let nested_start_at = items[nested_start].start_at;

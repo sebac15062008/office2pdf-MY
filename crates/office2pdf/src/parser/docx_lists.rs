@@ -196,7 +196,12 @@ fn resolve_numbering(
                         kind,
                         numbering_pattern,
                         full_numbering,
-                        marker_text: None,
+                        // Word renders the numbering definition's lvlText
+                        // glyph per level (•, ○, ▪ …); dropping it made
+                        // every level reuse the level-1 disc (issue #356).
+                        marker_text: (kind == ListKind::Unordered)
+                            .then(|| level.level_text.clone())
+                            .filter(|text| !text.is_empty()),
                         marker_style: None,
                     },
                     paragraph_style: level.paragraph_style.clone(),
