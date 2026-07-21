@@ -218,7 +218,7 @@ fn write_paragraph_border_params(out: &mut String, border: &CellBorder) {
 /// cannot render Word's double style. Only horizontal doubles occur in
 /// practice (letterhead rules); vertical doubles fall back to a single
 /// stroke drawn by `write_paragraph_border_params`.
-fn write_paragraph_double_border_overlays(out: &mut String, border: &Option<CellBorder>) {
+fn write_paragraph_double_border_overlays(out: &mut String, border: &Option<Box<CellBorder>>) {
     let Some(border) = border else {
         return;
     };

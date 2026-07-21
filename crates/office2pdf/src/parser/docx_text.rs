@@ -52,7 +52,9 @@ fn extract_paragraph_shading(shading: &Option<docx_rs::Shading>) -> Option<Color
 /// Word draws `w:pPr/w:pBdr` rules around the full paragraph width (heading
 /// underlines, letterhead frames). docx-rs keeps the side fields private, so
 /// they are read through the serialized form; `w:sz` is eighths of a point.
-fn extract_paragraph_borders(borders: &Option<docx_rs::ParagraphBorders>) -> Option<CellBorder> {
+fn extract_paragraph_borders(
+    borders: &Option<docx_rs::ParagraphBorders>,
+) -> Option<Box<CellBorder>> {
     let borders = borders.as_ref()?;
     let json = serde_json::to_value(borders).ok()?;
 
@@ -97,7 +99,7 @@ fn extract_paragraph_borders(borders: &Option<docx_rs::ParagraphBorders>) -> Opt
     {
         return None;
     }
-    Some(border)
+    Some(Box::new(border))
 }
 
 fn extract_indent(indent: &Option<docx_rs::Indent>) -> (Option<f64>, Option<f64>, Option<f64>) {

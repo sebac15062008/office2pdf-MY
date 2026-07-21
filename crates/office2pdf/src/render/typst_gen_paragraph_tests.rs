@@ -737,14 +737,14 @@ fn test_generate_paragraph_with_bottom_border_rule() {
     // wrapper's bottom edge (issue #368).
     let doc = make_doc(vec![make_flow_page(vec![Block::Paragraph(Paragraph {
         style: ParagraphStyle {
-            border: Some(CellBorder {
+            border: Some(Box::new(CellBorder {
                 bottom: Some(BorderSide {
                     width: 0.75,
                     color: Color::new(0x1E, 0x27, 0x61),
                     style: BorderLineStyle::Solid,
                 }),
                 ..CellBorder::default()
-            }),
+            })),
             ..ParagraphStyle::default()
         },
         runs: vec![Run {
@@ -767,14 +767,14 @@ fn test_generate_paragraph_with_double_bottom_border() {
     // have no double style (issue #368).
     let doc = make_doc(vec![make_flow_page(vec![Block::Paragraph(Paragraph {
         style: ParagraphStyle {
-            border: Some(CellBorder {
+            border: Some(Box::new(CellBorder {
                 bottom: Some(BorderSide {
                     width: 1.0,
                     color: Color::black(),
                     style: BorderLineStyle::Double,
                 }),
                 ..CellBorder::default()
-            }),
+            })),
             ..ParagraphStyle::default()
         },
         runs: vec![Run {

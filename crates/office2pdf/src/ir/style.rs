@@ -40,8 +40,9 @@ pub struct ParagraphStyle {
     /// paragraph width like Word's code-block backgrounds.
     pub background: Option<Color>,
     /// Paragraph borders (`w:pPr/w:pBdr`), drawn around the full paragraph
-    /// width like Word's heading rules and letterhead frames.
-    pub border: Option<super::elements::CellBorder>,
+    /// width like Word's heading rules and letterhead frames. Boxed to keep
+    /// paragraph-carrying enum variants compact.
+    pub border: Option<Box<super::elements::CellBorder>>,
 }
 
 /// A custom tab stop definition.
