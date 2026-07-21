@@ -394,6 +394,59 @@ fn test_number_format_currency() {
 }
 
 #[test]
+fn test_number_format_rounds_half_away_from_zero() {
+    // Excel rounds display values; the formatter truncated 107310.6 with
+    // #,##0 to 107,310 (issue #363).
+    let data = build_xlsx_formatted(|sheet| {
+        let cell = sheet.get_cell_mut("A1");
+        cell.set_value_number(107310.6f64);
+        cell.get_style_mut()
+            .get_number_format_mut()
+            .set_format_code("#,##0");
+    });
+    let parser = XlsxParser;
+    let (doc, _warnings) = parser.parse(&data, &ConvertOptions::default()).unwrap();
+
+    let tp = get_sheet_page(&doc, 0);
+    assert_eq!(cell_text(&tp.table.rows[0].cells[0]), "107,311");
+}
+
+#[test]
+fn test_number_format_pads_short_fractions_to_two_decimals() {
+    // 39.1 with a two-decimal format rendered "39.100" (issue #364).
+    let data = build_xlsx_formatted(|sheet| {
+        let cell = sheet.get_cell_mut("A1");
+        cell.set_value_number(39.1f64);
+        cell.get_style_mut()
+            .get_number_format_mut()
+            .set_format_code("0.00");
+    });
+    let parser = XlsxParser;
+    let (doc, _warnings) = parser.parse(&data, &ConvertOptions::default()).unwrap();
+
+    let tp = get_sheet_page(&doc, 0);
+    assert_eq!(cell_text(&tp.table.rows[0].cells[0]), "39.10");
+}
+
+#[test]
+fn test_percentage_format_rounds_decimal_tie_like_excel() {
+    // 21,300 / 20,000 = 1.065 displays as 107% in Excel: the display value
+    // is rounded as a decimal, not as the binary double 106.4999… (#363).
+    let data = build_xlsx_formatted(|sheet| {
+        let cell = sheet.get_cell_mut("A1");
+        cell.set_value_number(1.065f64);
+        cell.get_style_mut()
+            .get_number_format_mut()
+            .set_format_code(umya_spreadsheet::NumberingFormat::FORMAT_PERCENTAGE);
+    });
+    let parser = XlsxParser;
+    let (doc, _warnings) = parser.parse(&data, &ConvertOptions::default()).unwrap();
+
+    let tp = get_sheet_page(&doc, 0);
+    assert_eq!(cell_text(&tp.table.rows[0].cells[0]), "107%");
+}
+
+#[test]
 fn test_number_format_percentage() {
     let data = build_xlsx_formatted(|sheet| {
         let cell = sheet.get_cell_mut("A1");
