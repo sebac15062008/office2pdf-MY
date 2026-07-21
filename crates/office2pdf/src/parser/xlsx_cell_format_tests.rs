@@ -394,6 +394,24 @@ fn test_number_format_currency() {
 }
 
 #[test]
+fn test_number_format_keeps_quoted_currency_suffix() {
+    // The quoted euro literal after the digits was dropped, printing
+    // "1,240.00" instead of Excel's "1,240.00 €" (issue #365).
+    let data = build_xlsx_formatted(|sheet| {
+        let cell = sheet.get_cell_mut("A1");
+        cell.set_value_number(1240.0f64);
+        cell.get_style_mut()
+            .get_number_format_mut()
+            .set_format_code("#,##0.00\" €\"");
+    });
+    let parser = XlsxParser;
+    let (doc, _warnings) = parser.parse(&data, &ConvertOptions::default()).unwrap();
+
+    let tp = get_sheet_page(&doc, 0);
+    assert_eq!(cell_text(&tp.table.rows[0].cells[0]), "1,240.00 €");
+}
+
+#[test]
 fn test_number_format_rounds_half_away_from_zero() {
     // Excel rounds display values; the formatter truncated 107310.6 with
     // #,##0 to 107,310 (issue #363).
