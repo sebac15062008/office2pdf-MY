@@ -233,7 +233,10 @@ fn test_normal_font_max_digit_width_pixel_ceils_at_96_dpi() {
     assert_eq!(max_digit_width_px_for_normal_font("Calibri", 11.0), 8.0);
     assert_eq!(max_digit_width_px_for_normal_font("Carlito", 11.0), 8.0);
     assert_eq!(max_digit_width_px_for_normal_font("Arial", 10.0), 8.0);
-    assert_eq!(max_digit_width_px_for_normal_font("Malgun Gothic", 11.0), 8.0);
+    assert_eq!(
+        max_digit_width_px_for_normal_font("Malgun Gothic", 11.0),
+        8.0
+    );
     // Smaller Normal fonts shrink the metric.
     assert_eq!(max_digit_width_px_for_normal_font("Calibri", 8.0), 6.0);
 }
@@ -241,7 +244,10 @@ fn test_normal_font_max_digit_width_pixel_ceils_at_96_dpi() {
 #[test]
 fn test_extract_normal_font_reads_first_styles_font() {
     let mut book = umya_spreadsheet::new_file();
-    book.get_sheet_mut(&0).unwrap().get_cell_mut("A1").set_value("x");
+    book.get_sheet_mut(&0)
+        .unwrap()
+        .get_cell_mut("A1")
+        .set_value("x");
     let mut cursor = Cursor::new(Vec::new());
     umya_spreadsheet::writer::xlsx::write_writer(&book, &mut cursor).unwrap();
     let data = cursor.into_inner();
@@ -403,4 +409,3 @@ mod chart_tests;
 
 #[path = "xlsx_streaming_tests.rs"]
 mod streaming_tests;
-

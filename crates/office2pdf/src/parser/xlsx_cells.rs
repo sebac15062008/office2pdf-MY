@@ -708,8 +708,7 @@ pub(super) fn prepare_sheet_context(
         (1, max_col, 1, max_row)
     };
 
-    let max_digit_width_px =
-        normal_font_mdw.unwrap_or_else(|| sheet_max_digit_width_px(sheet));
+    let max_digit_width_px = normal_font_mdw.unwrap_or_else(|| sheet_max_digit_width_px(sheet));
     let column_widths: Vec<f64> = (col_start..=col_end)
         .map(|col| {
             sheet

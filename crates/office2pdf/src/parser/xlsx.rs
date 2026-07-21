@@ -251,7 +251,8 @@ impl XlsxParser {
                 continue;
             }
 
-            let Some((ctx, row_start, row_end)) = prepare_sheet_context(sheet, normal_font_mdw) else {
+            let Some((ctx, row_start, row_end)) = prepare_sheet_context(sheet, normal_font_mdw)
+            else {
                 // A sheet without used cells can still carry drawings; give
                 // its images a page instead of dropping them.
                 let sheet_name = sheet.get_name().to_string();
@@ -421,7 +422,6 @@ impl Parser for XlsxParser {
         let normal_font_mdw: Option<f64> = extract_normal_font(data)
             .map(|(family, size)| max_digit_width_px_for_normal_font(&family, size));
 
-
         // Extract charts with anchor positions per sheet
         let mut chart_map = extract_charts_with_anchors(data);
         let mut image_map = extract_images_with_anchors(data);
@@ -439,7 +439,8 @@ impl Parser for XlsxParser {
                 continue;
             }
 
-            let Some((ctx, row_start, row_end)) = prepare_sheet_context(sheet, normal_font_mdw) else {
+            let Some((ctx, row_start, row_end)) = prepare_sheet_context(sheet, normal_font_mdw)
+            else {
                 // A sheet without used cells can still carry drawings; give
                 // its images a page instead of dropping them.
                 let sheet_name = sheet.get_name().to_string();
