@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, HashMap};
 
-use crate::ir::{Block, List, ListItem, ListKind, ListLevelStyle, Paragraph, ParagraphStyle};
+use crate::ir::{Block, List, ListItem, ListKind, ListLevelStyle, Paragraph, ParagraphStyle, Run};
 
 /// Numbering info extracted from a paragraph's numPr.
 #[derive(Debug, Clone)]
@@ -15,6 +15,9 @@ struct ResolvedListLevel {
     paragraph_style: ParagraphStyle,
     start: u32,
     has_start_override: bool,
+    /// Raw Word `lvlText` (e.g. "제%1조") for inline-numbered paragraphs.
+    level_text: String,
+    number_format: String,
 }
 
 #[derive(Debug, Clone)]
@@ -192,6 +195,8 @@ fn resolve_numbering(
             (
                 *level_index,
                 ResolvedListLevel {
+                    level_text: level.level_text.clone(),
+                    number_format: level.number_format.clone(),
                     style: ListLevelStyle {
                         kind,
                         numbering_pattern,
@@ -283,6 +288,21 @@ struct NumberedItem {
     num_id: usize,
     series: NumberingSeries,
     item: ListItem,
+}
+
+/// Substitute the current counter into a Word `lvlText` placeholder
+/// ("제%1조" → "제3조"). Only the level's own placeholder participates for
+/// inline-numbered paragraphs.
+fn format_inline_number(level_text: &str, number_format: &str, number: u32) -> String {
+    let formatted: String = match number_format {
+        "decimalZero" => format!("{number:02}"),
+        _ => number.to_string(),
+    };
+    let mut label = level_text.to_string();
+    for placeholder_level in 1..=9 {
+        label = label.replace(&format!("%{placeholder_level}"), &formatted);
+    }
+    label
 }
 
 fn numbering_series(num_id: usize, numberings: &NumberingMap) -> NumberingSeries {
@@ -397,6 +417,58 @@ pub(super) fn group_into_lists(
                 }
                 let is_first_in_block = current_list.is_empty();
                 let mut paragraph = paragraph;
+
+                // Word puts numbers with `w:ind left=0 hanging=0` inline:
+                // number, suffix tab, first-line text, and continuation
+                // lines wrap back to the margin. A hanging-indent list would
+                // indent every continuation line instead (issue #357).
+                let is_flush_numbered = is_ordered
+                    && resolved_level.is_some_and(|level| {
+                        level.paragraph_style.indent_left == Some(0.0)
+                            && level.paragraph_style.indent_first_line == Some(0.0)
+                    })
+                    && paragraph.style.indent_left.unwrap_or(0.0) == 0.0
+                    && paragraph.style.indent_first_line.unwrap_or(0.0) == 0.0;
+                if is_flush_numbered {
+                    let level = resolved_level.expect("ordered level must be resolved");
+                    let series_counters = counters.entry(series).or_default();
+                    let should_restart =
+                        has_explicit_restart || !series_counters.contains_key(&info.level);
+                    let number = if should_restart {
+                        level.start
+                    } else {
+                        series_counters[&info.level].saturating_add(1)
+                    };
+                    series_counters.insert(info.level, number);
+                    series_counters.retain(|item_level, _| *item_level <= info.level);
+                    last_num_id.insert(series, info.num_id);
+
+                    if !current_list.is_empty() {
+                        result.push(Block::List(finalize_list(
+                            std::mem::take(&mut current_list),
+                            numberings,
+                        )));
+                    }
+                    let label =
+                        format_inline_number(&level.level_text, &level.number_format, number);
+                    let prefix_style = paragraph
+                        .runs
+                        .first()
+                        .map(|run| run.style.clone())
+                        .unwrap_or_default();
+                    paragraph.runs.insert(
+                        0,
+                        Run {
+                            text: format!("{label}\t"),
+                            style: prefix_style,
+                            href: None,
+                            footnote: None,
+                        },
+                    );
+                    result.push(Block::Paragraph(paragraph));
+                    continue;
+                }
+
                 apply_numbering_level_indentation(
                     &mut paragraph,
                     resolved_level.map(|level| &level.paragraph_style),
