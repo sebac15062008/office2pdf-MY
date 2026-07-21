@@ -156,6 +156,7 @@ fn anchored_image(
         stroke: None,
         alignment: None,
         clip_shape: None,
+        shadow: None,
     };
     crate::ir::SheetImage {
         anchor_row: anchor.from_row + 1,

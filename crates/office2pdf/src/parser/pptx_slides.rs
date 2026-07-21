@@ -587,6 +587,7 @@ fn build_background_image_element<R: Read + std::io::Seek>(
             stroke: None,
             alignment: None,
             clip_shape: None,
+            shadow: None,
         }),
     })
 }
@@ -822,6 +823,8 @@ struct PictureState {
     blip_alpha: Option<f64>,
     /// Preset geometry name from `<a:prstGeom prst>` ("crop to shape").
     prst_geom: Option<String>,
+    /// Outer shadow from the picture's `<a:effectLst>` (issue #360).
+    shadow: Option<Shadow>,
     /// First `<a:gd>` adjust value inside the picture's prstGeom avLst.
     prst_adj: Option<f64>,
     in_prst_geom: bool,
@@ -1183,6 +1186,7 @@ fn finalize_picture(
                     stroke: stroke.clone(),
                     alignment: None,
                     clip_shape,
+                    shadow: pic.shadow.clone(),
                 }),
             }
         })
@@ -1506,6 +1510,9 @@ impl<'a> SlideXmlParser<'a> {
             b"prstGeom" if self.in_pic && self.pic.in_sp_pr => {
                 self.pic.prst_geom = get_attr_str(e, b"prst");
                 self.pic.in_prst_geom = true;
+            }
+            b"effectLst" if self.in_pic && self.pic.in_sp_pr => {
+                self.pic.shadow = parse_effect_list(reader, self.theme, self.color_map);
             }
             b"gd" if self.in_pic && self.pic.in_prst_geom => {
                 if self.pic.prst_adj.is_none()

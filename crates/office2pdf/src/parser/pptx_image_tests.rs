@@ -1049,3 +1049,27 @@ fn test_plain_rect_picture_has_no_clip_shape() {
     let page = first_fixed_page(&doc);
     assert_eq!(get_image(&page.elements[0]).clip_shape, None);
 }
+
+#[test]
+fn test_picture_outer_shadow_parsed() {
+    // a:effectLst/a:outerShdw on p:pic was dropped, losing the card-like
+    // frame around chart images (issue #360).
+    let bmp_data = make_test_bmp();
+    let pic = r##"<p:pic><p:nvPicPr><p:cNvPr id="5" name="Chart"/><p:cNvPicPr/><p:nvPr/></p:nvPicPr><p:blipFill><a:blip r:embed="rId3"/><a:stretch><a:fillRect/></a:stretch></p:blipFill><p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="2000000" cy="1000000"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:effectLst><a:outerShdw blurRad="114300" dist="38100" dir="5400000" algn="bl" rotWithShape="0"><a:srgbClr val="000000"><a:alpha val="22000"/></a:srgbClr></a:outerShdw></a:effectLst></p:spPr></p:pic>"##;
+    let slide_xml = make_slide_xml(&[pic.to_string()]);
+    let slide_images = vec![TestSlideImage {
+        rid: "rId3".to_string(),
+        path: "../media/image1.bmp".to_string(),
+        data: bmp_data,
+        relationship_type: None,
+    }];
+    let data = build_test_pptx_with_images(SLIDE_CX, SLIDE_CY, &[(slide_xml, slide_images)]);
+    let parser = PptxParser;
+    let (doc, _warnings) = parser.parse(&data, &ConvertOptions::default()).unwrap();
+
+    let page = first_fixed_page(&doc);
+    let img = get_image(&page.elements[0]);
+    let shadow = img.shadow.as_ref().expect("picture shadow must be parsed");
+    assert!((shadow.opacity - 0.22).abs() < 0.01);
+    assert!((shadow.distance - 3.0).abs() < 0.1, "38100 EMU = 3pt");
+}

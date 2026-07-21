@@ -342,6 +342,7 @@ fn test_edge_image_only_docx() {
                 stroke: None,
                 alignment: None,
                 clip_shape: None,
+                shadow: None,
             })],
             header: None,
             footer: None,

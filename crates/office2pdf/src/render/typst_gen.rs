@@ -618,6 +618,26 @@ fn generate_fixed_element(
     match &elem.kind {
         FixedElementKind::TextBox(text_box) => generate_fixed_text_box(out, elem, text_box, ctx)?,
         FixedElementKind::Image(img) => {
+            if let Some(ref shadow) = img.shadow {
+                // Match the shape-shadow approximation: an offset duplicate
+                // with reduced opacity (Typst has no blur primitive).
+                let dir_rad = shadow.direction.to_radians();
+                let dx = shadow.distance * dir_rad.cos();
+                let dy = shadow.distance * dir_rad.sin();
+                let alpha = (shadow.opacity * 255.0).round() as u8;
+                let _ = writeln!(
+                    out,
+                    "#place(top + left, dx: {}pt, dy: {}pt, rect(width: {}pt, height: {}pt, fill: rgb({}, {}, {}, {})))",
+                    format_f64(dx),
+                    format_f64(dy),
+                    format_f64(elem.width),
+                    format_f64(elem.height),
+                    shadow.color.r,
+                    shadow.color.g,
+                    shadow.color.b,
+                    alpha,
+                );
+            }
             generate_image(out, img, ctx);
             // Render image border as a separate overlay so that #image()
             // dimensions are not affected by Typst's #box(stroke:) sizing.
