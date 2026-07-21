@@ -34,6 +34,7 @@ pub(super) fn generate_paragraph(
         out.push_str("#block(width: 100%");
         write_block_params_continuation(out, style);
         out.push_str(")[\n");
+        write_paragraph_double_border_overlays(out, &style.border);
         write_line_box_settings(out, style.line_box);
         write_par_settings(out, style);
         if let Some(ref settings) = line_height_settings {
@@ -84,6 +85,7 @@ pub(super) fn needs_block_wrapper(style: &ParagraphStyle) -> bool {
     style.space_before.is_some()
         || style.space_after.is_some()
         || style.background.is_some()
+        || style.border.is_some()
         || style.line_spacing.is_some()
         || style.line_box.is_some()
         || matches!(style.alignment, Some(Alignment::Justify))
@@ -153,6 +155,99 @@ fn write_block_params_continuation(out: &mut String, style: &ParagraphStyle) {
             ", fill: rgb({}, {}, {})",
             background.r, background.g, background.b
         );
+    }
+    if let Some(border) = &style.border {
+        write_paragraph_border_params(out, border);
+    }
+}
+
+/// Word offsets paragraph border rules slightly from the text; `w:space` is
+/// not carried per side, so a fixed 4pt gap approximates typical documents.
+const PARAGRAPH_BORDER_GAP_PT: f64 = 4.0;
+
+fn stroke_literal(side: &BorderSide) -> String {
+    let paint = format!("rgb({}, {}, {})", side.color.r, side.color.g, side.color.b);
+    let dash = match side.style {
+        BorderLineStyle::Dotted => Some("dotted"),
+        BorderLineStyle::Dashed => Some("dashed"),
+        BorderLineStyle::DashDot | BorderLineStyle::DashDotDot => Some("dash-dotted"),
+        _ => None,
+    };
+    match dash {
+        Some(dash) => format!(
+            "(paint: {paint}, thickness: {}pt, dash: \"{dash}\")",
+            format_f64(side.width)
+        ),
+        None => format!("{}pt + {paint}", format_f64(side.width)),
+    }
+}
+
+/// Emit `stroke:`/`inset:` block parameters for the paragraph's borders.
+/// Double rules are drawn as overlays (Typst strokes have no double style),
+/// so those sides only reserve inset space here.
+fn write_paragraph_border_params(out: &mut String, border: &CellBorder) {
+    let mut strokes: Vec<String> = Vec::new();
+    let mut insets: Vec<String> = Vec::new();
+
+    let mut push_side = |name: &str, side: &Option<BorderSide>| {
+        let Some(side) = side else {
+            return;
+        };
+        let reserved = if side.style == BorderLineStyle::Double {
+            PARAGRAPH_BORDER_GAP_PT + side.width * 3.0
+        } else {
+            strokes.push(format!("{name}: {}", stroke_literal(side)));
+            PARAGRAPH_BORDER_GAP_PT + side.width
+        };
+        insets.push(format!("{name}: {}pt", format_f64(reserved)));
+    };
+    push_side("top", &border.top);
+    push_side("bottom", &border.bottom);
+    push_side("left", &border.left);
+    push_side("right", &border.right);
+
+    if !strokes.is_empty() {
+        let _ = write!(out, ", stroke: ({})", strokes.join(", "));
+    }
+    if !insets.is_empty() {
+        let _ = write!(out, ", inset: ({})", insets.join(", "));
+    }
+}
+
+/// Draw double-rule paragraph borders as two placed hairlines; Typst strokes
+/// cannot render Word's double style. Only horizontal doubles occur in
+/// practice (letterhead rules); vertical doubles fall back to a single
+/// stroke drawn by `write_paragraph_border_params`.
+fn write_paragraph_double_border_overlays(out: &mut String, border: &Option<CellBorder>) {
+    let Some(border) = border else {
+        return;
+    };
+    for (name, side) in [("top", &border.top), ("bottom", &border.bottom)] {
+        let Some(side) = side else {
+            continue;
+        };
+        if side.style != BorderLineStyle::Double {
+            continue;
+        }
+        let w = side.width;
+        let near_dy = PARAGRAPH_BORDER_GAP_PT + w;
+        let far_dy = PARAGRAPH_BORDER_GAP_PT + w * 3.0;
+        let (align, sign) = if name == "top" {
+            ("top", -1.0)
+        } else {
+            ("bottom", 1.0)
+        };
+        for dy in [near_dy, far_dy] {
+            let _ = write!(
+                out,
+                "#place({align}, dy: {}pt, line(length: 100%, stroke: {}pt + rgb({}, {}, {})))",
+                format_f64(sign * dy),
+                format_f64(w),
+                side.color.r,
+                side.color.g,
+                side.color.b,
+            );
+        }
     }
 }
 

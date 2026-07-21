@@ -391,3 +391,30 @@ fn test_paragraph_shading_extracted_as_background() {
 
     assert_eq!(para.style.background, Some(Color::new(0xF4, 0xF4, 0xF4)));
 }
+
+#[test]
+fn test_paragraph_bottom_border_extracted() {
+    // w:pBdr bottom rules (resume header underline, letterhead frames) must
+    // reach the IR with Word's eighth-point width unit (issue #368).
+    let mut ruled = docx_rs::Paragraph::new().add_run(docx_rs::Run::new().add_text("JAMIE PARKER"));
+    ruled.property = ruled.property.set_borders(
+        docx_rs::ParagraphBorders::with_empty().set(
+            docx_rs::ParagraphBorder::new(docx_rs::ParagraphBorderPosition::Bottom)
+                .val(docx_rs::BorderType::Single)
+                .size(6)
+                .color("1E2761"),
+        ),
+    );
+    let data = build_docx_bytes(vec![ruled]);
+
+    let parser = DocxParser;
+    let (doc, _warnings) = parser.parse(&data, &ConvertOptions::default()).unwrap();
+    let para = first_paragraph(&doc);
+
+    let border = para.style.border.as_ref().expect("border must be parsed");
+    let bottom = border.bottom.as_ref().expect("bottom side present");
+    assert_eq!(bottom.width, 0.75, "w:sz is eighths of a point");
+    assert_eq!(bottom.color, Color::new(0x1E, 0x27, 0x61));
+    assert_eq!(bottom.style, BorderLineStyle::Solid);
+    assert!(border.top.is_none());
+}

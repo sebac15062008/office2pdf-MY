@@ -39,6 +39,9 @@ pub struct ParagraphStyle {
     /// Paragraph-wide shading fill (`w:pPr/w:shd`), painted behind the full
     /// paragraph width like Word's code-block backgrounds.
     pub background: Option<Color>,
+    /// Paragraph borders (`w:pPr/w:pBdr`), drawn around the full paragraph
+    /// width like Word's heading rules and letterhead frames.
+    pub border: Option<super::elements::CellBorder>,
 }
 
 /// A custom tab stop definition.
@@ -221,6 +224,9 @@ impl ParagraphStyle {
         }
         if other.background.is_some() {
             self.background = other.background;
+        }
+        if other.border.is_some() {
+            self.border = other.border.clone();
         }
     }
 }

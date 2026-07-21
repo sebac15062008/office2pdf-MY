@@ -730,3 +730,68 @@ fn test_generate_paragraph_with_background_shading() {
         "shaded paragraphs need the full-width block wrapper: {result}"
     );
 }
+
+#[test]
+fn test_generate_paragraph_with_bottom_border_rule() {
+    // w:pBdr bottom rules (resume header underline) must stroke the block
+    // wrapper's bottom edge (issue #368).
+    let doc = make_doc(vec![make_flow_page(vec![Block::Paragraph(Paragraph {
+        style: ParagraphStyle {
+            border: Some(CellBorder {
+                bottom: Some(BorderSide {
+                    width: 0.75,
+                    color: Color::new(0x1E, 0x27, 0x61),
+                    style: BorderLineStyle::Solid,
+                }),
+                ..CellBorder::default()
+            }),
+            ..ParagraphStyle::default()
+        },
+        runs: vec![Run {
+            text: "JAMIE PARKER".to_string(),
+            style: TextStyle::default(),
+            href: None,
+            footnote: None,
+        }],
+    })])]);
+    let result = generate_typst(&doc).unwrap().source;
+    assert!(
+        result.contains("stroke: (bottom: 0.75pt + rgb(30, 39, 97))"),
+        "bottom border must stroke the wrapper: {result}"
+    );
+}
+
+#[test]
+fn test_generate_paragraph_with_double_bottom_border() {
+    // Double letterhead rules render as two placed hairlines; Typst strokes
+    // have no double style (issue #368).
+    let doc = make_doc(vec![make_flow_page(vec![Block::Paragraph(Paragraph {
+        style: ParagraphStyle {
+            border: Some(CellBorder {
+                bottom: Some(BorderSide {
+                    width: 1.0,
+                    color: Color::black(),
+                    style: BorderLineStyle::Double,
+                }),
+                ..CellBorder::default()
+            }),
+            ..ParagraphStyle::default()
+        },
+        runs: vec![Run {
+            text: "주식회사 에이엑스솔루션".to_string(),
+            style: TextStyle::default(),
+            href: None,
+            footnote: None,
+        }],
+    })])]);
+    let result = generate_typst(&doc).unwrap().source;
+    let rule_count = result.matches("line(length: 100%").count();
+    assert_eq!(
+        rule_count, 2,
+        "double borders draw exactly two rules: {result}"
+    );
+    assert!(
+        !result.contains("stroke: (bottom:"),
+        "double sides must not also stroke the wrapper: {result}"
+    );
+}

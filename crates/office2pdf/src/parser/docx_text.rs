@@ -2,6 +2,7 @@ use super::{
     Alignment, Color, HyperlinkMap, LineSpacing, ParagraphStyle, TabAlignment, TabLeader, TabStop,
     TabStopOverride, TextStyle, VerticalTextAlign, apply_tab_stop_overrides,
 };
+use crate::ir::{BorderLineStyle, BorderSide, CellBorder};
 use crate::parser::units::{half_points_to_pt, twips_to_pt};
 use crate::parser::xml_util;
 
@@ -22,6 +23,7 @@ pub(super) fn extract_paragraph_style(prop: &docx_rs::ParagraphProperty) -> Para
     let (line_spacing, space_before, space_after) = extract_line_spacing(&prop.line_spacing);
     let tab_stops = extract_tab_stops(&prop.tabs);
     let background = extract_paragraph_shading(&prop.shading);
+    let border = extract_paragraph_borders(&prop.borders);
 
     ParagraphStyle {
         alignment,
@@ -36,6 +38,7 @@ pub(super) fn extract_paragraph_style(prop: &docx_rs::ParagraphProperty) -> Para
         direction: None,
         tab_stops,
         background,
+        border,
     }
 }
 
@@ -44,6 +47,57 @@ pub(super) fn extract_paragraph_style(prop: &docx_rs::ParagraphProperty) -> Para
 fn extract_paragraph_shading(shading: &Option<docx_rs::Shading>) -> Option<Color> {
     let shading = shading.as_ref()?;
     xml_util::parse_hex_color(&shading.fill)
+}
+
+/// Word draws `w:pPr/w:pBdr` rules around the full paragraph width (heading
+/// underlines, letterhead frames). docx-rs keeps the side fields private, so
+/// they are read through the serialized form; `w:sz` is eighths of a point.
+fn extract_paragraph_borders(borders: &Option<docx_rs::ParagraphBorders>) -> Option<CellBorder> {
+    let borders = borders.as_ref()?;
+    let json = serde_json::to_value(borders).ok()?;
+
+    let side = |name: &str| -> Option<BorderSide> {
+        let side_json = json.get(name)?;
+        let val = side_json.get("val")?.as_str()?;
+        let style = match val {
+            "nil" | "none" => return None,
+            "double" | "triple" => BorderLineStyle::Double,
+            "dotted" => BorderLineStyle::Dotted,
+            "dashed" | "dashSmallGap" => BorderLineStyle::Dashed,
+            "dotDash" => BorderLineStyle::DashDot,
+            "dotDotDash" => BorderLineStyle::DashDotDot,
+            _ => BorderLineStyle::Solid,
+        };
+        let size = side_json
+            .get("size")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(4.0);
+        let color = side_json
+            .get("color")
+            .and_then(|v| v.as_str())
+            .and_then(xml_util::parse_hex_color)
+            .unwrap_or_else(Color::black);
+        Some(BorderSide {
+            width: size / 8.0,
+            color,
+            style,
+        })
+    };
+
+    let border = CellBorder {
+        top: side("top"),
+        bottom: side("bottom"),
+        left: side("left"),
+        right: side("right"),
+    };
+    if border.top.is_none()
+        && border.bottom.is_none()
+        && border.left.is_none()
+        && border.right.is_none()
+    {
+        return None;
+    }
+    Some(border)
 }
 
 fn extract_indent(indent: &Option<docx_rs::Indent>) -> (Option<f64>, Option<f64>, Option<f64>) {

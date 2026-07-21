@@ -386,7 +386,7 @@ impl Default for TableCell {
 }
 
 /// Cell border specification.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct CellBorder {
     pub top: Option<BorderSide>,
     pub bottom: Option<BorderSide>,
