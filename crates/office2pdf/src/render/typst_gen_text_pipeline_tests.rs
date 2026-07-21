@@ -594,7 +594,10 @@ fn test_escape_typst_preserves_leading_space_runs() {
         result.starts_with("#\"      \""),
         "leading space runs must survive: {result}"
     );
-    assert!(result.ends_with("2. indented"), "text must follow: {result}");
+    assert!(
+        result.ends_with("2. indented"),
+        "text must follow: {result}"
+    );
 }
 
 #[test]
