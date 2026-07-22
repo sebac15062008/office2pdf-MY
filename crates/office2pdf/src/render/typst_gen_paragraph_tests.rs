@@ -647,9 +647,11 @@ fn test_centered_paragraph_with_spacing_keeps_full_width_block() {
 #[test]
 fn test_document_grid_pitch_snaps_line_height() {
     // A Korean Word section with <w:docGrid w:linePitch="360"> snaps body
-    // lines to an 18pt grid; the emitted leading must top up the font's
-    // metric line box to the pitch. Uses a font from Typst's embedded set
-    // so the test is environment-independent.
+    // lines to an 18pt grid. The line box is clamped to a fixed em height
+    // equal to the grid pitch (leading 0) so a taller fallback glyph on a
+    // line cannot inflate its advance past the grid (issue #398); the
+    // baseline splits the box by the font's ascender/descender ratio. Uses
+    // a font from Typst's embedded set so the test is environment-free.
     let Some((ascender, descender, _)) =
         crate::render::pdf::font_line_metrics_em("Libertinus Serif")
     else {
@@ -677,12 +679,16 @@ fn test_document_grid_pitch_snaps_line_height() {
 
     let expected_leading = 18.0 - (ascender + descender) * 10.0;
     assert!(
-        result.contains("top-edge: \"ascender\""),
-        "metric edges expected in: {result}"
+        result.contains(&format!(
+            "top-edge: {}em, bottom-edge: -{}em",
+            format_f64(ascender),
+            format_f64(descender)
+        )),
+        "fixed nominal-metric em edges expected (clamps fallback glyphs): {result}"
     );
     assert!(
         result.contains(&format!("leading: {}pt", format_f64(expected_leading))),
-        "grid leading {expected_leading} expected in: {result}"
+        "grid leading {expected_leading} unchanged from the metric-edge model: {result}"
     );
 }
 
@@ -756,8 +762,12 @@ fn test_no_document_grid_uses_word_single_spacing() {
     };
     let single_leading = (word_pitch * 10.0 - (ascender + descender) * 10.0).max(0.0);
     assert!(
-        result.contains("top-edge: \"ascender\""),
-        "metric edges expected: {result}"
+        result.contains(&format!(
+            "top-edge: {}em, bottom-edge: -{}em",
+            format_f64(ascender),
+            format_f64(descender)
+        )),
+        "fixed nominal-metric em edges expected: {result}"
     );
     assert!(
         result.contains(&format!("leading: {}pt", format_f64(single_leading))),

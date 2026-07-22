@@ -131,11 +131,38 @@ pub(super) fn word_line_height_settings(
     style: &ParagraphStyle,
     line_grid_pitch: Option<f64>,
 ) -> Option<String> {
-    let leading_pt: f64 = word_line_leading_pt(runs, style, line_grid_pitch)?;
+    let (ascender_em, descender_em, leading_pt) =
+        word_line_box_and_leading(runs, style, line_grid_pitch)?;
+    // Pin the line box to the nominal font's own metric edges as fixed em
+    // values rather than the "ascender"/"descender" keywords. The keywords
+    // let Typst resolve the box against the tallest font on each line, so a
+    // bullet marker or em dash pulled from a taller fallback font inflated
+    // that one line's advance past the grid/single-spacing (issue #398).
+    // Fixed nominal-metric edges keep every normal line identical to before
+    // (same baseline, same leading) while clamping the fallback-glyph line.
     Some(format!(
-        "#set text(top-edge: \"ascender\", bottom-edge: \"descender\")\n#set par(leading: {}pt)\n",
+        "#set text(top-edge: {}em, bottom-edge: -{}em)\n#set par(leading: {}pt)\n",
+        format_f64(ascender_em),
+        format_f64(descender_em),
         format_f64(leading_pt)
     ))
+}
+
+/// The nominal font's `(ascender_em, descender_em)` metric edges plus the
+/// leading that tops the line box up to Word's single-spacing or grid
+/// advance. `None` when the metric-edge treatment does not apply.
+fn word_line_box_and_leading(
+    runs: &[Run],
+    style: &ParagraphStyle,
+    line_grid_pitch: Option<f64>,
+) -> Option<(f64, f64, f64)> {
+    let leading_pt: f64 = word_line_leading_pt(runs, style, line_grid_pitch)?;
+    let family: &str = runs
+        .iter()
+        .find_map(|run| run.style.font_family.as_deref())?;
+    let (ascender_em, descender_em, _word_pitch_em) =
+        crate::render::pdf::font_line_metrics_em(family)?;
+    Some((ascender_em, descender_em, leading_pt))
 }
 
 /// The leading that accompanies Word metric text edges: the whitespace
