@@ -288,8 +288,12 @@ fn test_east_asian_table_cell_uses_natural_line_height_not_grid() {
     let result = generate_typst(&doc).unwrap().source;
 
     assert!(
-        result.contains("top-edge: \"ascender\""),
-        "Korean cell must use metric edges: {result}"
+        result.contains(&format!(
+            "top-edge: {}em, bottom-edge: -{}em",
+            format_f64(ascender),
+            format_f64(descender)
+        )),
+        "Korean cell must use fixed nominal-metric em edges: {result}"
     );
     assert!(
         result.contains(&format!("leading: {}pt", format_f64(natural_leading))),

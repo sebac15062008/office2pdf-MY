@@ -887,8 +887,12 @@ fn test_generate_list_metric_spacing_adds_gap_to_single_space_leading() {
         .source;
 
     assert!(
-        source.contains("top-edge: \"ascender\""),
-        "metric edges expected in: {source}"
+        source.contains(&format!(
+            "top-edge: {}em, bottom-edge: -{}em",
+            format_f64(ascender),
+            format_f64(descender)
+        )),
+        "fixed nominal-metric em edges expected in: {source}"
     );
     let expected = format_f64(single_space_leading_pt + 4.0);
     assert!(
