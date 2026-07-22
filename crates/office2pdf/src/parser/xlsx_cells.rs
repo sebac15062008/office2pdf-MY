@@ -486,22 +486,36 @@ fn compute_spill_width(
 /// Excel's fallback row height when the sheet declares none (Calibri 11).
 const EXCEL_DEFAULT_ROW_HEIGHT_PT: f64 = 15.0;
 
-/// Cell insets for spreadsheet tables. Excel pads cells only slightly
-/// above/below the text; Typst's default 5pt vertical inset overflowed
-/// auto-height rows (issue #396). Horizontal inset keeps ~2pt/side, the
-/// value the column-spill estimate assumes.
+/// Convert an OOXML row height to the whole-point track emitted by native
+/// Excel's macOS PDF path. Excel exposes the stored value in points in the
+/// worksheet UI, but its PDF grid is vertically compacted and snapped to
+/// whole PDF points. Across the ten XLSX audit workbooks, the two repeated
+/// fixed heights map consistently: 15pt -> 14pt and 25.5pt -> 23pt.
+///
+/// Keep this conversion in the XLSX parser rather than the generic table
+/// renderer so DOCX/PPTX table heights retain their native semantics.
+pub(super) fn native_excel_pdf_row_height(height: f64) -> f64 {
+    (height * 0.92).round().max(1.0)
+}
+
+/// Cell insets for spreadsheet tables. Excel's native single-line track is
+/// asymmetric around bottom-aligned text: 1pt above and 1.5pt below. Typst's
+/// default 5pt vertical inset overflowed auto-height rows (issue #396), while
+/// a 1pt bottom inset left them about 0.5pt short (issue #411). Horizontal
+/// inset keeps ~2pt/side, the value the column-spill estimate assumes.
 pub(super) const XLSX_CELL_PADDING: crate::ir::Insets = crate::ir::Insets {
     top: 1.0,
     right: 2.0,
-    bottom: 1.0,
+    bottom: 1.5,
     left: 2.0,
 };
 
-/// The height a row prints at. A recorded `ht` is the actual current height
-/// even when `customHeight` is false; rows without one use the sheet's
-/// defaultRowHeight. Exception: auto-sized rows (customHeight=false) that
-/// contain wrapped cells stay content-driven — our text metrics differ
-/// slightly from Excel's and a fixed height could clip a wrapped line.
+/// The height a row prints at. A recorded `ht` is the current worksheet
+/// height even when `customHeight` is false; rows without one use the sheet's
+/// defaultRowHeight. Fixed tracks are calibrated to native Excel's PDF grid.
+/// Exception: auto-sized rows (customHeight=false) that contain wrapped cells
+/// stay content-driven — our text metrics differ slightly from Excel's and a
+/// fixed height could clip a wrapped line.
 fn printed_row_height(
     sheet: &umya_spreadsheet::Worksheet,
     row_idx: u32,
@@ -517,14 +531,16 @@ fn printed_row_height(
     let declared_height: Option<f64> = row_dimension
         .map(|row| *row.get_height())
         .filter(|height| *height > 0.0);
-    declared_height.or_else(|| {
-        let sheet_default: f64 = *sheet.get_sheet_format_properties().get_default_row_height();
-        if sheet_default > 0.0 {
-            Some(sheet_default)
-        } else {
-            Some(EXCEL_DEFAULT_ROW_HEIGHT_PT)
-        }
-    })
+    declared_height
+        .or_else(|| {
+            let sheet_default: f64 = *sheet.get_sheet_format_properties().get_default_row_height();
+            if sheet_default > 0.0 {
+                Some(sheet_default)
+            } else {
+                Some(EXCEL_DEFAULT_ROW_HEIGHT_PT)
+            }
+        })
+        .map(native_excel_pdf_row_height)
 }
 
 /// Build TableRows for a range of rows in a sheet.

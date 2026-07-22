@@ -121,11 +121,15 @@ fn anchored_image(
         }
     };
     let row_height_at = |row_zero_based: u32| -> f64 {
-        sheet
+        let declared = sheet
             .get_row_dimension(&(row_zero_based + 1))
             .map(|row| *row.get_height())
             .filter(|height| *height > 0.0)
-            .unwrap_or(15.0)
+            .unwrap_or_else(|| {
+                let default = *sheet.get_sheet_format_properties().get_default_row_height();
+                if default > 0.0 { default } else { 15.0 }
+            });
+        native_excel_pdf_row_height(declared)
     };
 
     let (width, height): (f64, f64) =

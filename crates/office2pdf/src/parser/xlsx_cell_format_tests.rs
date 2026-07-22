@@ -353,7 +353,7 @@ fn test_row_height() {
 
     let tp = get_sheet_page(&doc, 0);
     let row = &tp.table.rows[0];
-    assert_eq!(row.height, Some(30.0));
+    assert_eq!(row.height, Some(28.0));
 }
 
 #[test]
@@ -1058,8 +1058,8 @@ fn test_row_height_used_even_without_custom_height_flag() {
     let tp = get_sheet_page(&doc, 0);
     assert_eq!(
         tp.table.rows[0].height,
-        Some(20.0),
-        "recorded ht is the printed row height even when customHeight is false"
+        Some(18.0),
+        "recorded ht is calibrated to the native PDF track even without customHeight"
     );
 }
 
@@ -1076,11 +1076,11 @@ fn test_row_without_dimension_uses_sheet_default_height() {
     let parser = XlsxParser;
     let (doc, _warnings) = parser.parse(&data, &ConvertOptions::default()).unwrap();
     let tp = get_sheet_page(&doc, 0);
-    assert_eq!(tp.table.rows[0].height, Some(24.0));
+    assert_eq!(tp.table.rows[0].height, Some(22.0));
     assert_eq!(
         tp.table.rows[1].height,
-        Some(18.0),
-        "rows without their own ht print at the sheet defaultRowHeight"
+        Some(17.0),
+        "rows without their own ht use the calibrated sheet defaultRowHeight"
     );
 }
 
@@ -1119,7 +1119,70 @@ fn test_wrapping_row_with_custom_height_stays_fixed() {
     let parser = XlsxParser;
     let (doc, _warnings) = parser.parse(&data, &ConvertOptions::default()).unwrap();
     let tp = get_sheet_page(&doc, 0);
-    assert_eq!(tp.table.rows[0].height, Some(30.0));
+    assert_eq!(tp.table.rows[0].height, Some(28.0));
+}
+
+#[test]
+fn test_native_excel_print_height_calibrates_custom_title_rows() {
+    // Native Excel PDF output measures a 25.5pt worksheet row as a 23pt
+    // printed track. Keeping the raw OOXML value makes both the title row
+    // and the table header too tall and pushes the data block down.
+    let data = build_xlsx_formatted(|sheet| {
+        sheet.get_cell_mut("A1").set_value("Dashboard title");
+        let row = sheet.get_row_dimension_mut(&1);
+        row.set_height(25.5);
+        row.set_custom_height(true);
+    });
+    let parser = XlsxParser;
+    let (doc, _warnings) = parser.parse(&data, &ConvertOptions::default()).unwrap();
+    let tp = get_sheet_page(&doc, 0);
+    assert_eq!(
+        tp.table.rows[0].height,
+        Some(23.0),
+        "25.5pt custom rows must match Excel's 23pt PDF track"
+    );
+}
+
+#[test]
+fn test_native_excel_print_height_calibrates_default_rows() {
+    // The same native print path measures the workbook's default 15pt row
+    // as a 14pt track. This matters for blank spacer rows because they have
+    // no content from which Typst could derive the native height.
+    let data = build_xlsx_formatted(|sheet| {
+        sheet.get_cell_mut("A1").set_value("Title");
+        sheet.get_cell_mut("A3").set_value("Header");
+        sheet
+            .get_sheet_format_properties_mut()
+            .set_default_row_height(15.0);
+    });
+    let parser = XlsxParser;
+    let (doc, _warnings) = parser.parse(&data, &ConvertOptions::default()).unwrap();
+    let tp = get_sheet_page(&doc, 0);
+    assert_eq!(
+        tp.table.rows[1].height,
+        Some(14.0),
+        "blank default rows must match Excel's 14pt PDF track"
+    );
+}
+
+#[test]
+fn test_xlsx_auto_row_padding_matches_native_14pt_track() {
+    // Arial 10's full hhea line plus Excel's asymmetric 1pt/1.5pt vertical
+    // insets forms the 14pt single-line track measured in native output.
+    // Keeping only 1pt below makes every later row drift upward by ~0.5pt.
+    let data = build_xlsx_formatted(|sheet| {
+        let cell = sheet.get_cell_mut("A1");
+        cell.set_value("North America");
+        cell.get_style_mut().get_alignment_mut().set_wrap_text(true);
+    });
+    let parser = XlsxParser;
+    let (doc, _warnings) = parser.parse(&data, &ConvertOptions::default()).unwrap();
+    let padding = get_sheet_page(&doc, 0)
+        .table
+        .default_cell_padding
+        .expect("XLSX table padding");
+    assert_eq!(padding.top, 1.0);
+    assert_eq!(padding.bottom, 1.5);
 }
 
 // ----- Print titles (issue #234) -----
