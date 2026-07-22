@@ -486,6 +486,17 @@ fn compute_spill_width(
 /// Excel's fallback row height when the sheet declares none (Calibri 11).
 const EXCEL_DEFAULT_ROW_HEIGHT_PT: f64 = 15.0;
 
+/// Cell insets for spreadsheet tables. Excel pads cells only slightly
+/// above/below the text; Typst's default 5pt vertical inset overflowed
+/// auto-height rows (issue #396). Horizontal inset keeps ~2pt/side, the
+/// value the column-spill estimate assumes.
+pub(super) const XLSX_CELL_PADDING: crate::ir::Insets = crate::ir::Insets {
+    top: 1.0,
+    right: 2.0,
+    bottom: 1.0,
+    left: 2.0,
+};
+
 /// The height a row prints at. A recorded `ht` is the actual current height
 /// even when `customHeight` is false; rows without one use the sheet's
 /// defaultRowHeight. Exception: auto-sized rows (customHeight=false) that

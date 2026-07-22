@@ -242,18 +242,21 @@ fn test_table_cell_compact_list_adds_inter_item_spacing_from_line_spacing() {
 #[test]
 fn test_east_asian_table_cell_uses_natural_line_height_not_grid() {
     // Word does not snap table-cell text to the document grid (measured
-    // Korean cells sit at the font's full line, not a grid multiple), so
-    // cells must use the natural single-spacing line height rather than
-    // Typst's glyph-tight default (issue #385). Uses a Typst-embedded font
-    // so the test is environment-free.
+    // Korean cells sit at the font's full line, not a grid multiple), and a
+    // single-line cell occupies the whole hhea line — emitted as a fixed
+    // box split by the ascender/descender ratio with zero leading, so
+    // auto-height rows are not left short (issues #385, #396). Uses a
+    // Typst-embedded font so the test is environment-free.
     let Some((ascender, descender, word_pitch_em)) =
         crate::render::pdf::font_line_metrics_em("Libertinus Serif")
     else {
         return; // no font book available (e.g. exotic CI sandbox)
     };
     let font_size: f64 = 10.0;
-    let natural_leading = ((word_pitch_em - (ascender + descender)) * font_size).max(0.0);
-    let grid_leading = 18.0 - (ascender + descender) * font_size;
+    let metric_em: f64 = ascender + descender;
+    let top_em: f64 = word_pitch_em * ascender / metric_em;
+    let bottom_em: f64 = word_pitch_em * descender / metric_em;
+    let grid_leading = 18.0 - metric_em * font_size;
     let cell = TableCell {
         content: vec![Block::Paragraph(Paragraph {
             style: ParagraphStyle::default(),
@@ -290,14 +293,14 @@ fn test_east_asian_table_cell_uses_natural_line_height_not_grid() {
     assert!(
         result.contains(&format!(
             "top-edge: {}em, bottom-edge: -{}em",
-            format_f64(ascender),
-            format_f64(descender)
+            format_f64(top_em),
+            format_f64(bottom_em)
         )),
-        "Korean cell must use fixed nominal-metric em edges: {result}"
+        "Korean cell must fill the full hhea line box: {result}"
     );
     assert!(
-        result.contains(&format!("leading: {}pt", format_f64(natural_leading))),
-        "Korean cell must use natural single-spacing leading ({natural_leading}pt): {result}"
+        result.contains("#set par(leading: 0pt)"),
+        "cell line box uses zero leading (box already equals the full line): {result}"
     );
     assert!(
         !result.contains(&format!("leading: {}pt", format_f64(grid_leading))),
@@ -307,16 +310,18 @@ fn test_east_asian_table_cell_uses_natural_line_height_not_grid() {
 
 #[test]
 fn test_latin_table_cell_uses_natural_line_height() {
-    // Latin cells likewise use their metric single-spacing line height
-    // (Word single spacing = hhea line), not Typst's glyph-tight default
-    // (issue #385).
+    // Latin cells likewise fill the font's full hhea line box (Word single
+    // spacing = hhea line), not Typst's glyph-tight default (issues #385,
+    // #396).
     let Some((ascender, descender, word_pitch_em)) =
         crate::render::pdf::font_line_metrics_em("Libertinus Serif")
     else {
         return;
     };
     let font_size: f64 = 10.0;
-    let natural_leading = ((word_pitch_em - (ascender + descender)) * font_size).max(0.0);
+    let metric_em: f64 = ascender + descender;
+    let top_em: f64 = word_pitch_em * ascender / metric_em;
+    let bottom_em: f64 = word_pitch_em * descender / metric_em;
     let cell = TableCell {
         content: vec![Block::Paragraph(Paragraph {
             style: ParagraphStyle::default(),
@@ -344,7 +349,11 @@ fn test_latin_table_cell_uses_natural_line_height() {
     let doc = make_doc(vec![make_flow_page(vec![Block::Table(table)])]);
     let result = generate_typst(&doc).unwrap().source;
     assert!(
-        result.contains(&format!("leading: {}pt", format_f64(natural_leading))),
-        "Latin cell must use natural single-spacing leading ({natural_leading}pt): {result}"
+        result.contains(&format!(
+            "top-edge: {}em, bottom-edge: -{}em",
+            format_f64(top_em),
+            format_f64(bottom_em)
+        )),
+        "Latin cell must fill the full hhea line box: {result}"
     );
 }

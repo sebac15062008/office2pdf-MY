@@ -540,13 +540,13 @@ fn generate_cell_paragraph(out: &mut String, para: &Paragraph, default_tab_width
         Some(Alignment::Right) => Some("right"),
         _ => None,
     };
-    // Table-cell text keeps its natural single-spacing line height: Word
-    // does not snap cell content to the section's document grid (measured
-    // Korean cells sit at the font's full line, not a grid multiple), so
-    // cells rendered with Typst's glyph-tight default came out shorter than
-    // Word's rows (issue #385). Passing no grid pitch selects the metric
-    // edges plus hhea leading, matching body text without the grid snap.
-    let line_height_settings: Option<String> = word_line_height_settings(&para.runs, style, None);
+    // Table-cell text occupies the font's full single-spacing (hhea) line
+    // as a fixed box: Word does not snap cell content to the document grid
+    // (measured Korean cells sit at the font's full line, not a grid
+    // multiple, issue #385), and a single-line cell must fill the whole
+    // line height Word gives it rather than only the tighter metric box —
+    // otherwise auto-height rows come out short (issue #396).
+    let line_height_settings: Option<String> = word_cell_line_box_settings(&para.runs, style);
     let has_block_wrapper = cell_paragraph_needs_block_wrapper(style)
         || align_str.is_some()
         || line_height_settings.is_some();

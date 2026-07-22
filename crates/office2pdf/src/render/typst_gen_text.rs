@@ -165,6 +165,34 @@ fn word_line_box_and_leading(
     Some((ascender_em, descender_em, leading_pt))
 }
 
+/// Line-box settings for a table cell: a fixed box spanning the font's
+/// full single-spacing (hhea) line, split by the ascender/descender ratio,
+/// with zero leading. A single-line cell then occupies the whole line
+/// height Word gives it, rather than only the tighter metric box (which
+/// left auto-height rows too short, issue #396). `None` when the font's
+/// metrics are unknown or the paragraph carries its own line spacing/box.
+pub(super) fn word_cell_line_box_settings(runs: &[Run], style: &ParagraphStyle) -> Option<String> {
+    if style.line_spacing.is_some() || style.line_box.is_some() {
+        return None;
+    }
+    let family: &str = runs
+        .iter()
+        .find_map(|run| run.style.font_family.as_deref())?;
+    let (ascender_em, descender_em, word_pitch_em) =
+        crate::render::pdf::font_line_metrics_em(family)?;
+    let metric_em: f64 = ascender_em + descender_em;
+    if metric_em <= 0.0 || word_pitch_em <= 0.0 {
+        return None;
+    }
+    let top_em: f64 = word_pitch_em * ascender_em / metric_em;
+    let bottom_em: f64 = word_pitch_em * descender_em / metric_em;
+    Some(format!(
+        "#set text(top-edge: {}em, bottom-edge: -{}em)\n#set par(leading: 0pt)\n",
+        format_f64(top_em),
+        format_f64(bottom_em)
+    ))
+}
+
 /// The leading that accompanies Word metric text edges: the whitespace
 /// Typst must insert between metric line boxes so consecutive lines land at
 /// Word's single-space advance (or the document grid pitch). `None` when
