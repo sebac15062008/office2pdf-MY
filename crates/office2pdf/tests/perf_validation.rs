@@ -1,20 +1,11 @@
 #![cfg(not(target_arch = "wasm32"))] // native-only integration tests (fs, qpdf, criterion)
-//! Performance validation tests with tiered targets.
+//! Performance smoke tests with a shared-CI safety ceiling.
 //!
-//! Three tiers based on document complexity:
-//!
-//! | Tier   | Pages / Slides / Sheets | P95 Budget |
-//! |--------|-------------------------|------------|
-//! | Small  | < 10                    | 2s         |
-//! | Medium | 10–50                   | 5s         |
-//! | Large  | 50–100                  | 8s         |
-//!
-//! Budgets include CI variability. The first conversion in a process warms
-//! the font cache (~1.5s one-time cost via `OnceLock`); subsequent conversions
-//! are ~10-100× faster. Large-tier tests are `#[ignore]`d to avoid CI timeouts.
-//!
-//! All tiers use the P95 budget (generous for CI). Warm-cache measurements
-//! are printed to stderr for diagnostic visibility.
+//! Shared GitHub runners do not provide a stable enough environment for an
+//! absolute product SLA or a statistically meaningful P95 measurement. These
+//! tests therefore use one deliberately generous ceiling to catch only gross
+//! regressions. Exact timings are printed for diagnostics and belong in the
+//! controlled benchmarks under `benches/`, not in a required CI gate.
 
 use std::io::Cursor;
 use std::sync::Once;
@@ -22,20 +13,30 @@ use std::time::{Duration, Instant};
 
 use office2pdf::config::{ConvertOptions, Format};
 
-// ── Tiered budgets (P95, including CI variance + cold-cache overhead) ────────
+// ── Gross-regression safety ceiling ─────────────────────────────────────────
 
-/// Small tier: < 10 pages. Handles cold font cache on first test in process.
-const SMALL_BUDGET: Duration = Duration::from_secs(2);
+/// This is not a product SLA. Normal medium conversions have historically
+/// taken roughly 2–5 seconds, while heavily contended local runs have reached
+/// about 10 seconds. Three times that observed worst case avoids runner-noise
+/// failures while still catching order-of-magnitude regressions.
+const CI_SANITY_CEILING: Duration = Duration::from_secs(30);
 
-/// Medium tier: 10–50 pages. XLSX tables are expensive in Typst; budget
-/// includes CI variance (observed ~3.4s on Ubuntu CI for 10×8×50 XLSX).
-const MEDIUM_BUDGET: Duration = Duration::from_secs(5);
+fn is_gross_regression(elapsed: Duration) -> bool {
+    elapsed >= CI_SANITY_CEILING
+}
 
-/// Large tier: 50–100 pages. Only run locally via `cargo test -- --ignored`.
-const LARGE_BUDGET: Duration = Duration::from_secs(8);
+fn assert_no_gross_regression(label: &str, elapsed: Duration) {
+    assert!(
+        !is_gross_regression(elapsed),
+        "{label} took {elapsed:?}, exceeding the {CI_SANITY_CEILING:?} gross-regression safety ceiling"
+    );
+}
 
-/// Warm-cache budget for font-cache validation tests.
-const WARM_CACHE_BUDGET: Duration = Duration::from_secs(2);
+#[test]
+fn gross_regression_ceiling_has_an_explicit_boundary() {
+    assert!(!is_gross_regression(Duration::from_secs(29)));
+    assert!(is_gross_regression(Duration::from_secs(30)));
+}
 
 // ── Font cache warm-up ──────────────────────────────────────────────────────
 
@@ -514,75 +515,57 @@ fn timed_convert(data: &[u8], format: Format, label: &str) -> Duration {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Small tier tests (< 10 pages/slides/sheets) — P95 budget: 2s
+// Small tier smoke tests (< 10 pages/slides/sheets)
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[test]
 fn perf_small_docx() {
     let data = build_small_docx();
     let elapsed = timed_convert(&data, Format::Docx, "Small DOCX (~5 pages)");
-    assert!(
-        elapsed < SMALL_BUDGET,
-        "Small DOCX conversion took {elapsed:?}, exceeds {SMALL_BUDGET:?} budget"
-    );
+    assert_no_gross_regression("Small DOCX conversion", elapsed);
 }
 
 #[test]
 fn perf_small_pptx() {
     let data = build_small_pptx();
     let elapsed = timed_convert(&data, Format::Pptx, "Small PPTX (5 slides)");
-    assert!(
-        elapsed < SMALL_BUDGET,
-        "Small PPTX conversion took {elapsed:?}, exceeds {SMALL_BUDGET:?} budget"
-    );
+    assert_no_gross_regression("Small PPTX conversion", elapsed);
 }
 
 #[test]
 fn perf_small_xlsx() {
     let data = build_small_xlsx();
     let elapsed = timed_convert(&data, Format::Xlsx, "Small XLSX (3 sheets)");
-    assert!(
-        elapsed < SMALL_BUDGET,
-        "Small XLSX conversion took {elapsed:?}, exceeds {SMALL_BUDGET:?} budget"
-    );
+    assert_no_gross_regression("Small XLSX conversion", elapsed);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Medium tier tests (10–50 pages/slides/sheets) — P95 budget: 3s
+// Medium tier smoke tests (10–50 pages/slides/sheets)
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[test]
 fn perf_medium_docx() {
     let data = build_medium_docx();
     let elapsed = timed_convert(&data, Format::Docx, "Medium DOCX (~20 pages)");
-    assert!(
-        elapsed < MEDIUM_BUDGET,
-        "Medium DOCX conversion took {elapsed:?}, exceeds {MEDIUM_BUDGET:?} budget"
-    );
+    assert_no_gross_regression("Medium DOCX conversion", elapsed);
 }
 
 #[test]
 fn perf_medium_pptx() {
     let data = build_medium_pptx();
     let elapsed = timed_convert(&data, Format::Pptx, "Medium PPTX (20 slides)");
-    assert!(
-        elapsed < MEDIUM_BUDGET,
-        "Medium PPTX conversion took {elapsed:?}, exceeds {MEDIUM_BUDGET:?} budget"
-    );
+    assert_no_gross_regression("Medium PPTX conversion", elapsed);
 }
 
 #[test]
 fn perf_medium_xlsx() {
     let data = build_medium_xlsx();
     let elapsed = timed_convert(&data, Format::Xlsx, "Medium XLSX (10 sheets)");
-    assert!(
-        elapsed < MEDIUM_BUDGET,
-        "Medium XLSX conversion took {elapsed:?}, exceeds {MEDIUM_BUDGET:?} budget"
-    );
+    assert_no_gross_regression("Medium XLSX conversion", elapsed);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Large tier tests (50–100 pages/slides/sheets) — P95 budget: 8s
+// Large tier smoke tests (50–100 pages/slides/sheets)
 // These are #[ignore]d to avoid CI timeouts on GitHub Actions runners.
 // Run locally with: cargo test -- --ignored
 // ═══════════════════════════════════════════════════════════════════════════
@@ -593,10 +576,7 @@ fn perf_large_docx() {
     ensure_font_cache_warm();
     let data = build_large_docx();
     let elapsed = timed_convert(&data, Format::Docx, "Large DOCX (~50 pages)");
-    assert!(
-        elapsed < LARGE_BUDGET,
-        "Large DOCX conversion took {elapsed:?}, exceeds {LARGE_BUDGET:?} budget"
-    );
+    assert_no_gross_regression("Large DOCX conversion", elapsed);
 }
 
 #[test]
@@ -605,10 +585,7 @@ fn perf_large_pptx() {
     ensure_font_cache_warm();
     let data = build_large_pptx();
     let elapsed = timed_convert(&data, Format::Pptx, "Large PPTX (50 slides)");
-    assert!(
-        elapsed < LARGE_BUDGET,
-        "Large PPTX conversion took {elapsed:?}, exceeds {LARGE_BUDGET:?} budget"
-    );
+    assert_no_gross_regression("Large PPTX conversion", elapsed);
 }
 
 #[test]
@@ -617,20 +594,17 @@ fn perf_large_xlsx() {
     ensure_font_cache_warm();
     let data = build_large_xlsx();
     let elapsed = timed_convert(&data, Format::Xlsx, "Large XLSX (20 sheets)");
-    assert!(
-        elapsed < LARGE_BUDGET,
-        "Large XLSX conversion took {elapsed:?}, exceeds {LARGE_BUDGET:?} budget"
-    );
+    assert_no_gross_regression("Large XLSX conversion", elapsed);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Font cache validation tests
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Verify per-stage metrics are populated and that the compile stage
-/// benefits from font caching on repeated conversions.
+/// Verify per-stage metrics are populated and a repeated conversion does not
+/// exhibit a gross regression after the font cache has been populated.
 #[test]
-fn perf_font_cache_second_conversion_faster() {
+fn perf_font_cache_second_conversion_sanity() {
     let data = build_small_docx();
     let opts = ConvertOptions::default();
 
@@ -657,11 +631,9 @@ fn perf_font_cache_second_conversion_faster() {
         m2.parse_duration, m2.codegen_duration, m2.compile_duration, m2.total_duration
     );
 
-    // Second conversion total should be under the warm-cache budget
-    assert!(
-        m2.total_duration < WARM_CACHE_BUDGET,
-        "Second DOCX conversion took {:?}, expected under {WARM_CACHE_BUDGET:?} with warm font cache",
-        m2.total_duration
+    assert_no_gross_regression(
+        "Second DOCX conversion with warm font cache",
+        m2.total_duration,
     );
 }
 
@@ -677,18 +649,12 @@ fn perf_cross_format_cached_conversion() {
     // PPTX with warm cache
     let pptx_data = build_small_pptx();
     let pptx_elapsed = timed_convert(&pptx_data, Format::Pptx, "PPTX (warm cache)");
-    assert!(
-        pptx_elapsed < WARM_CACHE_BUDGET,
-        "PPTX conversion with warm cache took {pptx_elapsed:?}, expected under {WARM_CACHE_BUDGET:?}"
-    );
+    assert_no_gross_regression("PPTX conversion with warm font cache", pptx_elapsed);
 
     // XLSX with warm cache
     let xlsx_data = build_small_xlsx();
     let xlsx_elapsed = timed_convert(&xlsx_data, Format::Xlsx, "XLSX (warm cache)");
-    assert!(
-        xlsx_elapsed < WARM_CACHE_BUDGET,
-        "XLSX conversion with warm cache took {xlsx_elapsed:?}, expected under {WARM_CACHE_BUDGET:?}"
-    );
+    assert_no_gross_regression("XLSX conversion with warm font cache", xlsx_elapsed);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

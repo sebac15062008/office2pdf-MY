@@ -96,12 +96,19 @@ It operates standalone without external runtimes (LibreOffice, Chromium, Docker)
 
 | Category | Requirement |
 |---|---|
-| **Performance** | 10-page document < 1 second, 100-page < 5 seconds |
+| **Performance** | Prevent order-of-magnitude regressions; establish product SLAs only from controlled, repeatable benchmarks |
 | **Memory** | < 500MB for 100-page documents |
 | **Binary size** | CLI < 50MB (including fonts) |
 | **Platforms** | Windows, macOS, Linux |
 | **Error handling** | Skip unparseable elements with warnings, continue overall conversion |
 | **Font fallback** | System font discovery + built-in default fonts |
+
+### 4.1 Performance Measurement Policy
+
+- Required shared-runner CI uses a 30-second per-conversion safety ceiling only to catch gross regressions. It is not a product SLA or P95 claim.
+- Product targets must name the versioned real-world fixtures, hardware, OS, font set, and cold- or warm-cache condition being measured.
+- Record at least 100 samples per scenario on a dedicated runner and report median, P95, and P99 before introducing a release-blocking latency target.
+- Keep benchmark baselines versioned. Changing a target requires before/after measurements and a written rationale in the PR.
 
 ---
 
